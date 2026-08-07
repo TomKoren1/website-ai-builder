@@ -1,0 +1,11 @@
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/terraform.tfstate
+infra/terraform/terraform.tfstate.backup
+infra/terraform/tfplan
+infra/terraform/*.tfvars
+
+# Secrets — never commit these
+infra/localstack/.auth-token
+*.env
+.env.*

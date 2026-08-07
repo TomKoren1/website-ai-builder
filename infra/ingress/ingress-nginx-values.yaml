@@ -1,0 +1,23 @@
+# Helm values for ingress-nginx, tuned for a single-node Kind cluster.
+#
+# Why hostPort instead of a LoadBalancer Service: Kind doesn't provision
+# real cloud load balancers, so a `type: LoadBalancer` Service would sit
+# in <pending> forever. Binding the controller pod's 80/443 directly to
+# the node's 80/443 (which Kind then maps to the host via kind-config.yaml)
+# is the standard way to get real traffic into an ingress-nginx-on-Kind setup.
+controller:
+  hostPort:
+    enabled: true
+  service:
+    type: ClusterIP
+  nodeSelector:
+    ingress-ready: "true"
+    kubernetes.io/os: linux
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Equal
+      effect: NoSchedule
+  # Single replica: this is a learning cluster, not HA production.
+  replicaCount: 1
+  admissionWebhooks:
+    enabled: true

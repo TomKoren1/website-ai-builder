@@ -1,0 +1,26 @@
+# Routes localstack.local (added to your hosts file) through ingress-nginx
+# to the LocalStack Service's edge port (4566), which multiplexes every
+# emulated AWS API (S3, KMS, IAM, STS, Route53) behind one HTTP endpoint.
+#
+# This is what Terraform's `endpoints` block and any `aws --endpoint-url`
+# command will point at, instead of a kubectl port-forward.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: localstack
+  namespace: localstack
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m" # allow larger S3 uploads through the proxy
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: localstack.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: localstack
+                port:
+                  number: 4566

@@ -1,0 +1,22 @@
+# Single control-plane node cluster for local dev.
+# extraPortMappings expose the host's 80/443 into the node's 80/443,
+# which is what lets ingress-nginx (running as a hostPort pod on this node)
+# receive real HTTP/HTTPS traffic from outside the cluster.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ai-builder
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP

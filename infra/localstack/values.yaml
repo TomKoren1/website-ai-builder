@@ -1,0 +1,66 @@
+# Helm values for the localstack/localstack chart.
+# Verified against `helm show values localstack/localstack` before writing this —
+# the chart's default image is localstack-pro, which requires a paid
+# LOCALSTACK_AUTH_TOKEN. We explicitly pin the free Community edition instead.
+image:
+  repository: localstack/localstack
+  tag: "latest"
+
+# SERVICES: only enable what we're actually using. s3 (site hosting),
+# route53 (DNS API practice, doesn't resolve publicly), kms (API-key
+# envelope encryption), iam + sts (least-privilege roles and AssumeRole).
+extraEnvVars:
+  - name: SERVICES
+    value: "s3,route53,kms,iam,sts"
+  # IAM enforcement is OFF by default in LocalStack — every API call
+  # succeeds regardless of attached policies unless this is set. Without
+  # it, the whole least-privilege/STS exercise is a no-op: the denied
+  # bucket would silently succeed instead of returning AccessDenied.
+  - name: ENFORCE_IAM
+    value: "1"
+
+debug: false
+
+# LocalStack now requires a free auth token for every install, community
+# and pro alike (licensing change, March 2026 — community/pro images were
+# merged). The token is a secret, so it does NOT belong in this file or in
+# Git: it's injected from a Kubernetes Secret you create out-of-band.
+# See infra/PHASE1-RUNBOOK.md step 0.5 for how to create `localstack-auth`.
+envFrom:
+  - secretRef:
+      name: localstack-auth
+
+# NOTE: Persistence (snapshot save/restore across restarts) has been a
+# paid-plan-only LocalStack feature since v1.0 — confirmed by testing:
+# PERSISTENCE=1 is silently a no-op on the free plan (no state/snapshot
+# log lines at all on startup). Left enabled here in case the plan ever
+# changes, but treat this LocalStack instance as EPHEMERAL: any pod
+# restart wipes buckets/keys/IAM state. Recovery routine is just
+# `terraform apply` again (idempotent) — nothing here is a true source
+# of truth; real site content always comes from Git via CI sync anyway.
+persistence:
+  enabled: true
+  size: 2Gi
+
+# Default chart Service type is NodePort (for standalone Docker/Minikube use).
+# We route through ingress-nginx instead, so ClusterIP is enough — no need
+# to punch a NodePort hole directly on the Kind node.
+service:
+  type: ClusterIP
+  edgeService:
+    targetPort: 4566
+
+# The chart creates a Role granting the LocalStack ServiceAccount pods/*
+# permissions, needed only for the Kubernetes Lambda executor. We're not
+# using Lambda, so skip granting that — same least-privilege instinct
+# we're applying to the IAM side, applied to the chart's own K8s RBAC.
+role:
+  create: false
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1
+    memory: 1Gi
