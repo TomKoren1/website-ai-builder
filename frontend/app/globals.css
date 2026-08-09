@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* No dark-mode auto-switch: every component built so far assumes a light
+   background (white forms, bg-gray-100 chat bubbles, etc.) and doesn't set
+   its own text color, relying on this file's --foreground. Letting the
+   OS/browser flip --foreground to near-white under dark mode produced
+   illegible near-white-on-light-gray text. Fix properly (make components
+   dark-mode-aware) later if the app ever wants a real dark theme. */
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
