@@ -9,7 +9,7 @@ Full architecture, design decisions, and the phase-by-phase build plan live in [
 ## Status
 
 - [x] **Phase 1 — Local environment**: Kind cluster, ingress-nginx, LocalStack (S3/Route53/KMS/IAM/STS), least-privilege IAM via Terraform
-- [ ] **Phase 2 — Backend & database**: PostgreSQL schema, FastAPI, AI orchestration, KMS envelope-encrypted API keys
+- [x] **Phase 2 — Backend & database**: PostgreSQL schema, FastAPI, Gitea (per-project repos), KMS envelope-encrypted API keys, AI chat/push — full loop (register → project → encrypted key → chat → push a real commit) verified end-to-end
 - [ ] **Phase 3 — Frontend**: Next.js auth, live preview canvas
 - [ ] **Phase 4 — GitOps & CI/CD**: Argo CD (platform infra) + CI-driven S3 sync (user site content)
 - [ ] **Phase 5 — Observability**: kube-prometheus-stack, Grafana dashboards-as-code
@@ -21,6 +21,7 @@ Full architecture, design decisions, and the phase-by-phase build plan live in [
 | Frontend | Next.js |
 | Backend / AI orchestrator | Python (FastAPI) |
 | Database | PostgreSQL |
+| Git server (per-project site repos) | Gitea |
 | Local cluster | Kind |
 | AWS emulation | LocalStack (S3, Route53, KMS, IAM, STS) |
 | GitOps (platform infra only) | Argo CD |
@@ -41,9 +42,15 @@ infra/
   kind/                   Kind cluster config
   ingress/                ingress-nginx Helm values + Ingress manifests
   localstack/             LocalStack Helm values (SERVICES, IAM enforcement, etc.)
+  postgres/                hand-written Postgres StatefulSet (see manifests.yaml for why no Helm chart)
+  gitea/                   Gitea Helm values — self-hosted Git server for per-project repos
   terraform/              LocalStack-backed AWS resources (S3, KMS, IAM least-privilege policy)
   up.ps1                  idempotent bring-up script for the whole Phase 1 stack
   PHASE1-RUNBOOK.md        manual step-by-step commands (what up.ps1 automates)
+  PHASE2-RUNBOOK.md        Postgres + Gitea + backend setup (venv, migrations, smoke tests)
+backend/                 FastAPI service — auth, projects, encrypted API keys, AI chat/push
+  README.md                file-by-file map of app/ and its subdirectories
+  WORKFLOW.md              runtime picture — request flows, where every piece of data lives
 ```
 
 ## Getting started (Phase 1)
@@ -55,6 +62,16 @@ Bring the whole stack up:
 powershell -ExecutionPolicy Bypass -File infra\up.ps1
 ```
 It's idempotent — safe to run whether the stack is down, half up, or already running. First run will prompt for your LocalStack auth token (never stored in Git). See `infra/PHASE1-RUNBOOK.md` for the manual, step-by-step version if you want to understand what each step does before automating it.
+
+## Getting started (Phase 2)
+
+With Phase 1 up, bring up Postgres + Gitea and the backend itself — see `infra/PHASE2-RUNBOOK.md` for the full step-by-step (org/token setup, `.env` config, Alembic migrations, smoke tests). Short version once everything's configured:
+```
+cd backend
+.venv\Scripts\activate
+uvicorn app.main:app --reload
+```
+See `backend/README.md` for what's in each file, and `backend/WORKFLOW.md` for how a request actually flows through auth, project creation, API-key encryption, and the chat/push loop.
 
 ## Why these choices
 
