@@ -73,7 +73,7 @@ users            id, email, password_hash, created_at
 sessions         id, user_id, refresh_token_hash, expires_at, created_at
 projects         id, user_id, name, git_repo_path, created_at
 domains          id, project_id, domain_name, s3_bucket_name, verified, created_at
-api_keys         id, user_id, provider, ciphertext, encrypted_dek, nonce, created_at, last_used_at
+api_keys         id, user_id, provider, display_hint, ciphertext, encrypted_dek, nonce, created_at, last_used_at
 conversations    id, project_id, created_at
 messages         id, conversation_id, role, content, created_at
 deployments      id, project_id, git_commit_sha, status, deployed_at

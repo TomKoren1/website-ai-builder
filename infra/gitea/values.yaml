@@ -1,0 +1,89 @@
+# Helm values for gitea-charts/gitea. Verified against `helm show values`
+# and the chart's own templates before writing this (same discipline as
+# Phase 1, after getting burned twice trusting field names on faith).
+#
+# Self-hosted Git server for per-project repos (see overview.md Phase 2)
+# — the backend creates a repo here per project via Gitea's REST API,
+# and this is what the AI orchestrator commits generated site files to.
+
+image:
+  registry: "docker.gitea.com" # Gitea's own registry — not Bitnami, no paywall risk found here.
+
+persistence:
+  enabled: true
+  size: 2Gi
+
+# Default RollingUpdate starts the new pod before killing the old one.
+# Gitea's local queue backend uses leveldb on the shared PVC, which only
+# tolerates one process at a time — with a single replica, RollingUpdate
+# causes the new pod to fight the still-running old pod for that lock
+# ("resource temporarily unavailable"), crash-looping until you notice.
+# Recreate avoids it: old pod fully terminates before the new one starts.
+strategy:
+  type: Recreate
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: gitea.local
+      paths:
+        - path: /
+
+# Reuses the Postgres instance from infra/postgres/manifests.yaml instead of
+# standing up a second database technology. NAME=gitea is created by the
+# init script on that StatefulSet. USER/PASSWD come from a Secret (not
+# plaintext here) — see PHASE2-RUNBOOK.md for how `gitea-db-credentials`
+# gets created with the same values as Postgres's own credentials.
+gitea:
+  config:
+    database:
+      DB_TYPE: postgres
+      HOST: postgres.postgres.svc.cluster.local:5432
+      NAME: gitea
+      SSL_MODE: disable
+  additionalConfigFromEnvs:
+    - name: GITEA__database__USER
+      valueFrom:
+        secretKeyRef:
+          name: gitea-db-credentials
+          key: POSTGRES_USER
+    - name: GITEA__database__PASSWD
+      valueFrom:
+        secretKeyRef:
+          name: gitea-db-credentials
+          key: POSTGRES_PASSWORD
+
+  # Not hardcoded — created out-of-band as a Secret with `username`/`password`
+  # keys (chart's expected key names for this field), same pattern as every
+  # other credential in this project.
+  admin:
+    existingSecret: gitea-admin-secret
+
+# Explicitly disabled rather than left to chart defaults: the valkey/redis
+# subcharts here are the kind of third-party dependency that burned us with
+# Bitnami's Postgres image. We don't need a cache/queue backend for a
+# single-instance dev setup, so there's no reason to pull them in at all.
+valkey:
+  enabled: false
+valkey-cluster:
+  enabled: false
+
+# CAUGHT LATE, WORTH FLAGGING: `postgresql.enabled: false` is NOT the same
+# key as this one. The chart ships a *separate* `postgresql-ha` subchart
+# (3-replica Postgres + pgpool, on the same paywalled bitnamilegacy image
+# family as before) that defaults to enabled=true independently. Gitea was
+# still correctly wired to our own Postgres via gitea.config.database.HOST
+# above regardless — this bundled cluster was just running unused — but it
+# needs to be off explicitly, both for resource waste and to not depend on
+# a frozen/paywalled image we don't control.
+postgresql-ha:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

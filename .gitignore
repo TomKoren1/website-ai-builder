@@ -8,4 +8,11 @@ infra/terraform/*.tfvars
 # Secrets — never commit these
 infra/localstack/.auth-token
 *.env
-.env.*
+!*.env.example
+
+# Python
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.venv/
+backend/*.egg-info/
+

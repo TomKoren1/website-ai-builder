@@ -1,0 +1,103 @@
+# Hand-written manifests instead of a Helm chart — deliberately. The
+# Bitnami postgresql chart (the usual default choice) now pulls a
+# paywalled image (Bitnami Secure Images only, as of the 2025 Broadcom
+# restructuring); the free fallback (`bitnamilegacy/*`) is frozen and
+# may be removed. A single-instance Postgres for local dev is simple
+# enough that hand-authoring it directly against the official `postgres`
+# image avoids that dependency risk entirely, and is good practice
+# writing a StatefulSet directly instead of always reaching for a chart.
+#
+# Credentials are NOT in this file — see PHASE2-RUNBOOK.md for how the
+# `postgres-credentials` Secret gets created out-of-band, same pattern
+# as the LocalStack auth token in Phase 1.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: postgres
+---
+# POSTGRES_DB (in the postgres-credentials Secret) creates the app's own
+# database automatically on first boot. Gitea needs a second database —
+# rather than running a separate DB technology just for Gitea, it shares
+# this Postgres instance via its own database. This init script only
+# runs once, when the data directory is first empty.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: postgres
+data:
+  01-create-gitea-db.sql: |
+    CREATE DATABASE gitea;
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None # headless — StatefulSet gets a stable DNS name per pod, not needed for load balancing since there's only one replica
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: postgres-credentials
+          env:
+            # Postgres writes version-specific files directly into the
+            # mount root by default; nesting one level down avoids
+            # "directory not empty" errors if the image version ever changes.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: postgres-init-scripts
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
