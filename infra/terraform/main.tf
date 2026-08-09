@@ -83,6 +83,29 @@ data "aws_iam_policy_document" "orchestrator_permissions" {
     ]
   }
 
+  # Bucket creation for user sites (Flow B — see docs/errors.md and
+  # overview.md's reverse-proxy correction). Scoped to the "site-*" name
+  # prefix, never "*": bucket names are always generated server-side as
+  # "site-{project_id}" (backend/app/routers/domains.py), never taken from
+  # user input, so this prefix is the only namespace the orchestrator can
+  # ever touch — it can't be tricked into creating/listing a bucket outside
+  # it. Deliberately NO PutObject/GetObject here: the orchestrator only
+  # ever creates the bucket (at domain-registration time); writing site
+  # files is ci-deploy-role's job, reading them back is reverse-proxy-role's
+  # — see those below. Splitting by who-does-what, not sharing one broad
+  # role, is the actual point of this exercise.
+  statement {
+    sid    = "S3SiteBucketCreateOnly"
+    effect = "Allow"
+    actions = [
+      "s3:CreateBucket",
+      "s3:ListBucket",
+    ]
+    resources = [
+      "arn:aws:s3:::site-*",
+    ]
+  }
+
   statement {
     sid       = "KMSDecryptOnly"
     effect    = "Allow"
@@ -99,4 +122,120 @@ resource "aws_iam_policy" "orchestrator_permissions" {
 resource "aws_iam_role_policy_attachment" "orchestrator" {
   role       = aws_iam_role.orchestrator.name
   policy_arn = aws_iam_policy.orchestrator_permissions.arn
+}
+
+# ---------------------------------------------------------------------------
+# ci-deploy-role — assumed by the Gitea Actions CI job (via act_runner,
+# using its own static keys the same way orchestrator-app does; there's no
+# OIDC/IRSA available under Kind+LocalStack to do this without static keys
+# either). Only what `aws s3 sync` actually needs: write and delete objects,
+# list to diff against what's already there. No CreateBucket (the
+# orchestrator already created it before CI ever runs) and no GetObject
+# (CI never needs to read a file back, only push new ones) — a leaked
+# ci-deploy credential can deface a site's content but can't read it back
+# or spin up new buckets.
+# ---------------------------------------------------------------------------
+resource "aws_iam_user" "ci_deploy_app" {
+  name = "ci-deploy-app"
+}
+
+resource "aws_iam_access_key" "ci_deploy_app" {
+  user = aws_iam_user.ci_deploy_app.name
+}
+
+data "aws_iam_policy_document" "ci_deploy_trust" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_user.ci_deploy_app.arn]
+    }
+  }
+}
+
+resource "aws_iam_role" "ci_deploy" {
+  name               = "ci-deploy-role"
+  assume_role_policy = data.aws_iam_policy_document.ci_deploy_trust.json
+}
+
+data "aws_iam_policy_document" "ci_deploy_permissions" {
+  statement {
+    sid    = "S3SiteBucketWriteOnly"
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      "arn:aws:s3:::site-*",
+      "arn:aws:s3:::site-*/*",
+    ]
+  }
+}
+
+resource "aws_iam_policy" "ci_deploy_permissions" {
+  name   = "ci-deploy-least-privilege"
+  policy = data.aws_iam_policy_document.ci_deploy_permissions.json
+}
+
+resource "aws_iam_role_policy_attachment" "ci_deploy" {
+  role       = aws_iam_role.ci_deploy.name
+  policy_arn = aws_iam_policy.ci_deploy_permissions.arn
+}
+
+# ---------------------------------------------------------------------------
+# reverse-proxy-role — assumed by the reverse-proxy service that actually
+# serves site content to visitors (see overview.md correction #1). Read
+# only: it looks up domain -> bucket in Postgres, then GETs the object.
+# Never needs to create, write, or delete anything.
+# ---------------------------------------------------------------------------
+resource "aws_iam_user" "reverse_proxy_app" {
+  name = "reverse-proxy-app"
+}
+
+resource "aws_iam_access_key" "reverse_proxy_app" {
+  user = aws_iam_user.reverse_proxy_app.name
+}
+
+data "aws_iam_policy_document" "reverse_proxy_trust" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_user.reverse_proxy_app.arn]
+    }
+  }
+}
+
+resource "aws_iam_role" "reverse_proxy" {
+  name               = "reverse-proxy-role"
+  assume_role_policy = data.aws_iam_policy_document.reverse_proxy_trust.json
+}
+
+data "aws_iam_policy_document" "reverse_proxy_permissions" {
+  statement {
+    sid    = "S3SiteBucketReadOnly"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket",
+    ]
+    resources = [
+      "arn:aws:s3:::site-*",
+      "arn:aws:s3:::site-*/*",
+    ]
+  }
+}
+
+resource "aws_iam_policy" "reverse_proxy_permissions" {
+  name   = "reverse-proxy-least-privilege"
+  policy = data.aws_iam_policy_document.reverse_proxy_permissions.json
+}
+
+resource "aws_iam_role_policy_attachment" "reverse_proxy" {
+  role       = aws_iam_role.reverse_proxy.name
+  policy_arn = aws_iam_policy.reverse_proxy_permissions.arn
 }

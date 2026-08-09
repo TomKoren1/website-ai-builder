@@ -1,0 +1,26 @@
+image:
+  repository: ai-builder-reverse-proxy
+  tag: local
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  port: 8080
+
+env:
+  AWS_ENDPOINT_URL: http://localstack.localstack.svc.cluster.local:4566
+  AWS_REGION: us-east-1
+
+# Created out-of-band, same pattern as backend-secrets. Expected keys:
+# DATABASE_URL, AWS_REVERSE_PROXY_APP_ACCESS_KEY_ID,
+# AWS_REVERSE_PROXY_APP_SECRET_ACCESS_KEY, AWS_REVERSE_PROXY_ROLE_ARN.
+secretName: reverse-proxy-secrets
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi

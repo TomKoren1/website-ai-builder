@@ -21,3 +21,15 @@ controller:
   replicaCount: 1
   admissionWebhooks:
     enabled: true
+  # Any request whose Host header doesn't match app.local/localstack.local/
+  # gitea.local's Ingress rules falls through here instead of nginx's
+  # built-in 404 default backend — this is how a friend's custom domain
+  # actually resolves to their site (see overview.md correction #1: no
+  # Ingress rule can be pre-created per custom domain, since domains are
+  # added by users at runtime, long after this chart is installed).
+  # Requires infra/ingress/manifests/app-ingress.yaml's `reverse-proxy`
+  # Service to already exist — apply that (or let Argo CD sync it) before
+  # `helm upgrade`ing this, or nginx will just have an unreachable default
+  # backend until it does.
+  extraArgs:
+    default-backend-service: "ai-builder/reverse-proxy"

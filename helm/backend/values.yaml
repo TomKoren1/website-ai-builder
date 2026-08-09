@@ -1,0 +1,46 @@
+image:
+  repository: ai-builder-backend
+  tag: local
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  port: 8000
+
+# Non-secret config only — see secretName below for credentials. In-cluster
+# DNS names replace what .env.example uses for local `uvicorn --reload`
+# (ingress hostnames / localhost) now that the backend itself runs in the
+# cluster and can reach these Services directly without going through
+# ingress-nginx or a port-forward.
+#
+# Service names below (gitea-http, localstack, postgres) are the *expected*
+# names from each chart's defaults — verify with `kubectl get svc -n
+# <namespace>` before relying on them; don't trust field names on faith
+# (see docs/errors.md).
+env:
+  ENVIRONMENT: local # no TLS at the ingress yet — keep cookies non-Secure; flip once cert-manager is added
+  FRONTEND_ORIGIN: http://app.local
+  JWT_ACCESS_TOKEN_TTL_MINUTES: "15"
+  JWT_REFRESH_TOKEN_TTL_DAYS: "30"
+  AWS_ENDPOINT_URL: http://localstack.localstack.svc.cluster.local:4566
+  AWS_REGION: us-east-1
+  KMS_KEY_ALIAS: alias/ai-builder-orchestrator
+  GITEA_URL: http://gitea-http.gitea.svc.cluster.local:3000
+  GITEA_ADMIN_USERNAME: admin
+
+# Created out-of-band with `kubectl create secret generic backend-secrets
+# --from-literal=...` — never committed to Git, same pattern as
+# postgres-credentials / localstack-auth / gitea-admin-secret. Expected
+# keys: DATABASE_URL, JWT_SECRET, AWS_ORCHESTRATOR_APP_ACCESS_KEY_ID,
+# AWS_ORCHESTRATOR_APP_SECRET_ACCESS_KEY, AWS_ORCHESTRATOR_ROLE_ARN,
+# GITEA_ADMIN_TOKEN. See infra/PHASE4-RUNBOOK.md.
+secretName: backend-secrets
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

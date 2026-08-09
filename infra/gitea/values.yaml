@@ -42,6 +42,15 @@ gitea:
       HOST: postgres.postgres.svc.cluster.local:5432
       NAME: gitea
       SSL_MODE: disable
+    # Flow B (see infra/PHASE4-RUNBOOK-B.md) — per-project repos get a
+    # .gitea/workflows/deploy.yml (seeded by the backend at project
+    # creation) that syncs pushed site files to S3. Actions themselves
+    # being enabled here doesn't run anything by itself — still needs an
+    # act_runner registered (infra/gitea/act-runner.yaml) to actually
+    # execute jobs; with none registered, workflow_dispatch calls just
+    # queue forever.
+    actions:
+      ENABLED: true
   additionalConfigFromEnvs:
     - name: GITEA__database__USER
       valueFrom:

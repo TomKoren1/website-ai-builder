@@ -1,0 +1,26 @@
+# sync-wave -1: must exist before anything that deploys into it (backend,
+# frontend, the backend-secrets Secret created out-of-band).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: infrastructure-namespace
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TomKoren1/website-ai-builder.git
+    targetRevision: main
+    path: argocd/manifests
+    directory:
+      include: "namespace.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai-builder
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false # this Application's whole job IS creating the namespace

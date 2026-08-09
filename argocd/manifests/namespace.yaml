@@ -1,0 +1,8 @@
+# Owned by Argo CD going forward (unlike postgres/gitea/localstack's
+# namespaces, which predate Argo CD and are still created imperatively by
+# up.ps1 / the Phase 2 runbook) — this is the first namespace that's part
+# of the GitOps flow from the start.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-builder

@@ -1,0 +1,25 @@
+# The one Application applied manually (`kubectl apply -f`, not committed
+# to any Application's own sync scope — applying this to itself would be
+# the circular-dependency mistake). Everything else in argocd/applications/
+# is created/updated/deleted by Argo CD once this exists. See
+# infra/PHASE4-RUNBOOK.md for the one-time bootstrap command.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TomKoren1/website-ai-builder.git
+    targetRevision: main
+    path: argocd/applications
+    directory:
+      recurse: false # one level only — each file here is itself an Application, not a subdirectory to flatten
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

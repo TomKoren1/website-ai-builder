@@ -1,0 +1,38 @@
+# Real app.local Ingress — replaces the throwaway test-app.yaml from Phase 1
+# now that there's an actual frontend/backend to route to (see overview.md
+# Phase 1: "App domain -> frontend Service; /api path -> backend Service").
+#
+# rewrite-target strips the /api prefix before forwarding: the backend's
+# own routes are unprefixed (/auth/login, /projects, ...), so nginx must
+# drop /api itself rather than the backend needing to know about it. This
+# also makes frontend<->backend calls same-origin through this one host,
+# which is why NEXT_PUBLIC_API_URL is baked as http://app.local/api (see
+# frontend/Dockerfile) rather than a separate cross-origin host.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app
+  namespace: ai-builder
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app.local
+      http:
+        paths:
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: /()(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000

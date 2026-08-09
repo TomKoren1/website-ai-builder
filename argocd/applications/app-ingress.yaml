@@ -1,0 +1,25 @@
+# sync-wave 1: routes app.local to backend/frontend Services, so it needs
+# to land alongside them (order between the three doesn't matter to nginx
+# — it'll just 503 until the Service it targets exists).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app-ingress
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TomKoren1/website-ai-builder.git
+    targetRevision: main
+    path: infra/ingress/manifests
+    directory:
+      include: "app-ingress.yaml" # not the whole directory — localstack-ingress.yaml here is still up.ps1-managed, not Argo CD's yet
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai-builder
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

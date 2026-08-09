@@ -1,0 +1,124 @@
+# Phase 4 Runbook — Flow A: Argo CD + platform-managed backend/frontend
+
+Covers getting the backend and frontend Dockerized, running in-cluster, and
+reconciled by Argo CD via the app-of-apps in `argocd/`. Flow B (per-project
+CI → S3 sync) is a separate runbook once it exists.
+
+Prerequisite: Phase 1 (`infra/up.ps1`) and Phase 2 (Postgres + Gitea, see
+`PHASE2-RUNBOOK.md`) already up and reachable.
+
+## 1. Build the images
+
+No image registry in this setup — Kind can't pull from one, so images are
+built locally and loaded directly into the cluster's node.
+
+```
+docker build -t ai-builder-backend:local backend/
+docker build -t ai-builder-frontend:local frontend/
+kind load docker-image ai-builder-backend:local --name ai-builder
+kind load docker-image ai-builder-frontend:local --name ai-builder
+```
+
+`imagePullPolicy: IfNotPresent` in both Helm charts means the kubelet won't
+try to pull from a registry as long as the tag is already present on the
+node — that's what `kind load docker-image` puts there. Re-run this whole
+step (rebuild + reload) after any backend/frontend code change; nothing
+here watches for changes automatically yet.
+
+## 2. Install Argo CD
+
+```
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl wait --namespace argocd --for=condition=available deployment --all --timeout=300s
+```
+
+Get the initial admin password (delete the secret afterward per Argo CD's
+own guidance, once you've logged in and changed it):
+```powershell
+$b64 = kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}"
+[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($b64))
+```
+
+Access the UI (no Ingress for it yet — port-forward):
+```
+kubectl port-forward -n argocd svc/argocd-server 8080:443
+```
+→ https://localhost:8080, user `admin`.
+
+## 3. Create the ai-builder namespace's Secret
+
+The `ai-builder` namespace itself is created *by* Argo CD (the
+`infrastructure-namespace` Application, sync-wave -1) — but `backend-secrets`
+holds actual credentials, so like every other credential in this project
+it's created out-of-band, not committed to Git. This has to happen after
+the namespace exists (step 4) but before the backend Application syncs
+successfully (it'll just show `Missing` until this Secret exists — that's
+expected, not a bug).
+
+Values come from the same places `backend/.env` already points at
+(`terraform output`, the Gitea token, your `JWT_SECRET`) — see
+`backend/.env.example` for what each one is:
+
+```
+kubectl create secret generic backend-secrets -n ai-builder \
+  --from-literal=DATABASE_URL="postgresql+asyncpg://app:<postgres password>@postgres.postgres.svc.cluster.local:5432/app" \
+  --from-literal=JWT_SECRET="<same generation method as PHASE2-RUNBOOK step 1>" \
+  --from-literal=AWS_ORCHESTRATOR_APP_ACCESS_KEY_ID="<terraform output -raw orchestrator_app_access_key_id>" \
+  --from-literal=AWS_ORCHESTRATOR_APP_SECRET_ACCESS_KEY="<terraform output -raw orchestrator_app_secret_access_key>" \
+  --from-literal=AWS_ORCHESTRATOR_ROLE_ARN="<terraform output -raw orchestrator_role_arn>" \
+  --from-literal=GITEA_ADMIN_TOKEN="<Gitea admin token, same scopes as PHASE2-RUNBOOK: write:organization, write:repository>"
+```
+
+## 4. Bootstrap the app-of-apps
+
+Applied once, manually — everything else in `argocd/applications/` is then
+created/updated by Argo CD itself from Git:
+```
+kubectl apply -f argocd/bootstrap/root-application.yaml
+```
+
+Watch it reconcile:
+```
+kubectl get applications -n argocd -w
+```
+Expect, in order: `infrastructure-namespace` → Synced/Healthy, then
+`backend`/`frontend`/`app-ingress` → Synced (backend stays `Degraded` until
+step 3's Secret exists — check `kubectl describe application backend -n
+argocd` if it doesn't clear once the Secret is created).
+
+## 5. Run the database migration
+
+Not automated (see the comment in `backend/Dockerfile` — no auto-migrate
+on container start, to avoid multiple replicas racing on `alembic upgrade
+head`). One-off, against the running pod:
+```
+kubectl exec -n ai-builder deploy/backend -- alembic upgrade head
+```
+
+## 6. Verify
+
+Add to your hosts file if not already there (same pattern as
+`localstack.local`/`gitea.local` from earlier phases):
+```
+127.0.0.1 app.local
+```
+Then:
+```
+curl http://app.local/api/docs   # backend, through the /api rewrite
+```
+Open `http://app.local` in a browser — should hit the frontend, login page
+loads, and login/register calls succeed through `/api` (same-origin now —
+no more `localhost:3000` ↔ `localhost:8000` cross-origin CORS dance from
+`next dev`).
+
+## Known follow-up (not done in this pass)
+
+`ingress-nginx` and LocalStack are still installed imperatively by
+`infra/up.ps1` (Helm directly), not reconciled by Argo CD — bringing them
+under GitOps too needs Argo CD's "multiple sources" Application (public
+Helm chart + this repo's `infra/ingress`/`infra/localstack` values files as
+a second source), which wasn't built out in this pass to avoid shipping
+something unverified against a live cluster. `overview.md`'s Phase 4 sync
+waves lists this as wave 0 ("platform") — worth doing once Flow A above is
+confirmed working end-to-end.

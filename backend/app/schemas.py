@@ -55,7 +55,11 @@ class ApiKeyOut(BaseModel):
 class DomainCreate(BaseModel):
     project_id: uuid.UUID
     domain_name: str
-    s3_bucket_name: str
+    # No s3_bucket_name here deliberately — it's generated server-side
+    # (site-{project_id}) in domains.py, never taken from the client. See
+    # docs/errors.md / the Flow B bucket-naming discussion for why: an
+    # attacker-controlled bucket name is exactly what the "site-*"
+    # IAM-prefix scoping in infra/terraform/main.tf is there to prevent.
 
 
 class DomainOut(BaseModel):
@@ -103,3 +107,12 @@ class DeploymentOut(BaseModel):
     status: str
     created_at: datetime
     deployed_at: datetime | None
+
+
+class DeploymentCallback(BaseModel):
+    # No user auth on this endpoint (CI isn't a logged-in browser session)
+    # — the token itself, checked against the hash stored on this specific
+    # Deployment row, is the only thing authenticating this request. See
+    # chat.py's push() for where it's generated.
+    status: str  # "success" | "failed"
+    token: str

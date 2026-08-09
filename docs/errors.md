@@ -137,3 +137,51 @@ Real problems hit while building this project, why they happened, and how they w
 **Why:** Confirmed to match a known upstream LocalStack limitation ([localstack/localstack#7183](https://github.com/localstack/localstack/issues/7183)), not a mistake in this project's Terraform.
 
 **Status:** Left as-is and documented rather than worked around. Verification for this piece stops at "the Terraform policy/role/trust-policy is written correctly," not "the emulator proved it's enforced" — that gap only closes once this points at real AWS IAM.
+
+---
+
+## Phase 4 — GitOps & CI/CD
+
+### Bucket-name-as-domain reconsidered — reverse-proxy chosen permanently, not just for local dev
+
+**Not a bug — a design decision worth recording since it reversed something `overview.md` originally implied.** Real S3 supports two ways to put a custom domain in front of a static site: (a) name the bucket exactly after the domain and point Route53 straight at S3's website endpoint (a hard AWS requirement for that path — S3's website endpoint resolves the bucket from the `Host` header, there's no other routing info available), or (b) front it with a proxy/CDN (CloudFront, or this project's own reverse-proxy), where the domain attaches to the proxy and bucket naming is free to be anything.
+
+**Why (b) won, permanently:** `overview.md`'s Phase 1 correction #1 already picked the reverse-proxy approach, originally reasoned as a LocalStack limitation (no public Route53 resolution locally). Revisited when actually building Flow B: the reverse-proxy stays the permanent serving path even once this points at real AWS, not just a local workaround — confirmed explicitly rather than assumed. That decision is what makes deterministic, internal bucket naming (`site-{project_id}`, never derived from user input) possible at all — see the next entry.
+
+**Lesson:** A design note written to explain away a local-environment limitation can quietly become "the permanent architecture" without ever being re-examined as one. Worth explicitly re-confirming *why* a decision was made before building more on top of it, especially when the original reasoning (LocalStack can't do X) doesn't actually generalize to the reason it's still the right call (this also avoids public buckets and lets IAM be scoped tighter).
+
+### Bucket creation needed real IAM scoping, not just "give the backend more permissions"
+
+**What happened:** Adding bucket creation for Flow B meant widening `orchestrator-role` beyond its original `kms:Decrypt` + `s3:Put/GetObject`-on-one-fixture-bucket scope. The naive version — grant `s3:CreateBucket` broadly, name buckets after user-supplied domains — would have made an attacker-controlled string into an AWS resource name directly.
+
+**Why it was avoidable, not just mitigable:** Because of the reverse-proxy decision above, `domain → bucket` is a Postgres lookup, not something AWS ever resolves directly — so bucket names never needed to come from user input in the first place.
+
+**Fix:** Bucket names are generated server-side (`site-{project_id}`, `backend/app/routers/domains.py`); `infra/terraform/main.tf`'s `orchestrator-role` grant is scoped via an ARN condition to the `site-*` prefix, so even a fully compromised orchestrator credential can't touch a bucket outside that namespace.
+
+### One shared role vs. three narrowly-scoped ones for the S3 work
+
+**Not a bug — the granularity question came up explicitly when planning Flow B**, since three different jobs touch site buckets: the backend creates them, CI writes site files to them, the reverse-proxy reads them back to serve visitors. The tempting simpler option was one shared "deploy" role reused by all three.
+
+**Why three won:** A single shared role means one leaked credential (e.g. from a misconfigured CI log — a realistic leak vector, not a hypothetical one) can create, overwrite, *and* read every site bucket. Three separate identities — `orchestrator-role` (CreateBucket/ListBucket only, never touches content), `ci-deploy-role` (PutObject/DeleteObject/ListBucket, no CreateBucket, no GetObject — CI never reads a file back), `reverse-proxy-role` (GetObject/ListBucket only) — mean a leaked credential from any one of the three can only do that one job, not the other two.
+
+**Lesson:** "Which service does this?" is a cheaper question to ask upfront than "how do we contain the blast radius after a leak?" — splitting by responsibility at design time was less total work than the shared-role version plus the IAM tightening that would eventually follow it anyway.
+
+### Per-deployment one-time token, not a static shared CI secret
+
+**Not a bug — same category as the two above.** The CI job needs to authenticate its callback to the backend (`POST /projects/{id}/deployments/{id}/callback`) somehow, since it isn't a logged-in browser session. The simpler option — one static `CI_CALLBACK_TOKEN` configured once as a Gitea org secret, checked against a single backend config value — was considered and rejected.
+
+**Why:** A single static value that authenticates *every* callback, for every project, indefinitely, is a much bigger leak surface than a token scoped to one deployment. The chosen design (`chat.py`'s `push()`) generates a random token per push, stores only its sha256 hash on that one `Deployment` row, hands the raw value to the CI job via `workflow_dispatch` inputs (never committed to the repo/git history), and nulls the hash out once the callback consumes it — so a leaked token is worthless outside a narrow window, for one deployment, once. Mirrors the existing refresh-token pattern (`security/jwt.py`) rather than inventing a new one.
+
+### `workflow_dispatch`, not `on: push` — because of the token above
+
+**Not a bug — a consequence of the previous decision, worth calling out since it changes what "CI triggered by a push" actually means here.** A plain `on: push` Gitea Actions trigger has no channel for the backend to hand the workflow a secret at trigger time — anything in the triggering commit is visible in git history forever. Using `workflow_dispatch` instead means the *backend* (not a user's `git push`) is what actually starts the CI run, immediately after committing via the Gitea API, passing the bucket name, deployment id, and one-time token as dispatch inputs. `.gitea/workflows/deploy.yml` (seeded once per project at creation, in `projects.py`) is therefore fully generic and parameterized — never templated per-project — since every value it needs arrives at dispatch time.
+
+### Near-miss: conflated the Gitea repo name with the internal project ID
+
+**What happened:** While wiring the CI callback URL into `.gitea/workflows/deploy.yml`, the first draft used `${{ github.event.repository.name }}` (Gitea's repo name, e.g. `project-ab12cd34ef56`) as the `{project_id}` path segment in `POST /projects/{project_id}/deployments/{deployment_id}/callback` — but that route expects the internal `Project.id` UUID, a completely different value the workflow has no other way to know. Caught during review before ever running, not from a live failure.
+
+**Why it happened:** Two different systems (Gitea's own repo identity, this app's internal `Project.id`) both plausibly answer "which project is this," and only one of them is actually in scope inside the workflow's execution context.
+
+**Fix:** Added `project_id` as its own explicit `workflow_dispatch` input, passed alongside `bucket_name`/`deployment_id`/`callback_token` from `chat.py`'s dispatch call, rather than trying to derive it from anything Gitea already provides.
+
+**Lesson:** When wiring a callback across two systems that each have their own notion of "this project's ID," don't reach for whatever identifier happens to be available in the immediate context (`github.event.*` here) — trace it back to confirm it's actually *the same* identifier the receiving endpoint expects, not just a plausible-looking one.

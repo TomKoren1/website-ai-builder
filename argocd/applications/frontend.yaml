@@ -1,0 +1,23 @@
+# sync-wave 1: after the namespace exists, alongside backend. Assumes the
+# ai-builder-frontend:local image has been built (with the right
+# NEXT_PUBLIC_API_URL build ARG baked in) and `kind load docker-image`d.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: frontend
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TomKoren1/website-ai-builder.git
+    targetRevision: main
+    path: helm/frontend
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai-builder
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

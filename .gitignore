@@ -12,8 +12,9 @@ infra/localstack/.auth-token
 cookies.txt
 
 # Python
-backend/__pycache__/
-backend/**/__pycache__/
+__pycache__/
+**/__pycache__/
+*.pyc
 backend/.venv/
 backend/*.egg-info/
 

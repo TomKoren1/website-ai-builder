@@ -27,10 +27,10 @@ backend/
 | `main.py` | FastAPI app instance. Wires every router in `app/routers/` into the app, plus CORS middleware (allows only `settings.frontend_origin`, credentials on — required for the browser to send/receive auth cookies cross-origin to the Next dev server). Entry point for `uvicorn app.main:app`. |
 | `config.py` | `Settings` (pydantic-settings) — the single source of truth for every env var. Reads `.env` locally; reads real environment variables once deployed. Everything else imports `get_settings()` rather than touching `os.environ` directly. Includes `environment` (gates the cookie `Secure` flag — off for `next dev`'s plain-HTTP local server) and `frontend_origin` (the CORS allowlist entry). |
 | `db.py` | SQLAlchemy async engine + session factory + declarative `Base`. `get_db()` is the FastAPI dependency every route uses to get a DB session. |
-| `models.py` | SQLAlchemy ORM models — the 7 tables from `overview.md` (`users`, `sessions`, `projects`, `domains`, `api_keys`, `conversations`, `messages`, `deployments`). This is the schema's source of truth; Alembic migrations are generated *from* this file, not the other way around. |
-| `schemas.py` | Pydantic request/response models (what the API actually accepts and returns) — deliberately separate from `models.py` (the DB shape) so the two can diverge, e.g. `ApiKeyOut` never has a `ciphertext` field even though the DB row does. |
+| `models.py` | SQLAlchemy ORM models — the 7 tables from `overview.md` (`users`, `sessions`, `projects`, `domains`, `api_keys`, `conversations`, `messages`, `deployments`). This is the schema's source of truth; Alembic migrations are generated *from* this file, not the other way around. `deployments.callback_token_hash` (Flow B) holds the hash of the one-time token handed to CI — see `chat.py`. |
+| `schemas.py` | Pydantic request/response models (what the API actually accepts and returns) — deliberately separate from `models.py` (the DB shape) so the two can diverge, e.g. `ApiKeyOut` never has a `ciphertext` field even though the DB row does. `DomainCreate` deliberately has no `s3_bucket_name` field — see `domains.py`. `DeploymentCallback` is the one schema with no user auth behind it (see `chat.py`). |
 | `crypto.py` | Envelope encryption for user-supplied LLM API keys: generates a per-row AES-256-GCM key (DEK), encrypts the API key with it, wraps the DEK via KMS. This is the implementation of the "API Key Security" design in `overview.md`. |
-| `gitea_client.py` | Thin HTTP client (`httpx`) for the Gitea REST API — creates a repo per project, commits/updates files in it. Everything under a fixed `projects` org, since our users aren't Gitea users themselves. |
+| `gitea_client.py` | Thin HTTP client (`httpx`) for the Gitea REST API — creates a repo per project, commits/updates files in it, and (Flow B) `dispatch_workflow()` triggers a project's `.gitea/workflows/deploy.yml` via Gitea's Actions API with per-deployment inputs. Everything under a fixed `projects` org, since our users aren't Gitea users themselves. |
 
 ### `app/security/` — auth primitives
 
@@ -47,6 +47,7 @@ backend/
 |---|---|
 | `sts.py` | Holds the orchestrator-app's only long-lived credentials and uses them for exactly one thing: `sts:AssumeRole` into `orchestrator-role` (the least-privilege role from Phase 1's Terraform). Caches the resulting temporary credentials in memory, refreshing shortly before they expire. |
 | `kms.py` | `encrypt_dek`/`decrypt_dek` — calls KMS using the *temporary* credentials from `sts.py`, never the long-lived ones directly. This is what `crypto.py` calls into. |
+| `s3.py` | `ensure_bucket_exists()` (Flow B) — creates a project's `site-{project_id}` bucket via the same assumed-role pattern. `orchestrator-role` only grants `s3:CreateBucket`/`ListBucket` on the `site-*` prefix — it never writes or reads object content; that's `ci-deploy-role`'s and `reverse-proxy-role`'s job respectively (separate identities entirely — see `infra/terraform/main.tf` and `reverse-proxy/`). |
 
 ### `app/llm/` — the provider-agnostic AI layer
 
@@ -62,10 +63,10 @@ backend/
 | File | Endpoints | What it does |
 |---|---|---|
 | `auth.py` | `POST /auth/register`, `/login`, `/refresh`, `/logout`, `GET /auth/me` | Issues JWT access tokens + rotating hashed refresh tokens (httpOnly cookies) + a CSRF token (non-httpOnly). `/me` returns the current user — how the frontend learns "am I logged in," since the access token itself is unreadable by JS by design. |
-| `projects.py` | `POST /projects`, `GET /projects`, `GET /projects/{id}` | Creates a project + its backing Gitea repo; lists/fetches a user's own projects. |
+| `projects.py` | `POST /projects`, `GET /projects`, `GET /projects/{id}` | Creates a project + its backing Gitea repo, and (Flow B) seeds `.gitea/workflows/deploy.yml` into it — a generic, `workflow_dispatch`-only workflow parameterized entirely via dispatch inputs, so it's identical across every project and never needs editing per-repo. Lists/fetches a user's own projects. |
 | `api_keys.py` | `POST /api-keys`, `GET /api-keys`, `DELETE /api-keys/{id}` | Encrypt-on-write via `crypto.py`; reads only ever return `display_hint` (a masked preview), never plaintext. |
-| `domains.py` | `POST /domains` | Records a project's custom-domain → S3-bucket mapping (consumed later by the reverse-proxy design from `overview.md` Phase 1). |
-| `chat.py` | `GET /projects/{id}/messages`, `POST /projects/{id}/chat`, `POST /projects/{id}/push` | The core AI loop, plus `/messages` for the frontend to reconstruct chat history + accumulated files on page load. See `WORKFLOW.md` for the full request lifecycle. |
+| `domains.py` | `POST /domains` | Records a project's custom-domain → S3-bucket mapping (consumed by the reverse-proxy — see `reverse-proxy/`). The bucket name (`site-{project_id}`) is generated here, never taken from the client, and the bucket is created here too (`app/aws/s3.py`) — reused across a project's later domains rather than created per-domain. |
+| `chat.py` | `GET /projects/{id}/messages`, `POST /projects/{id}/chat`, `POST /projects/{id}/push`, `POST /projects/{id}/deployments/{id}/callback` | The core AI loop, plus `/messages` for the frontend to reconstruct chat history + accumulated files on page load. `/push` commits to Gitea and — if the project has a domain registered — creates the `Deployment` as `pending`, generates a one-time hashed callback token, and dispatches the CI workflow; `/callback` is how that workflow reports `success`/`failed` back (token-authenticated, no user session — see `WORKFLOW.md`). See `WORKFLOW.md` for the full request lifecycle. |
 
 ### `app/utils/`
 

@@ -1,4 +1,6 @@
+import hashlib
 import json
+import secrets
 import uuid
 from datetime import datetime, timezone
 
@@ -11,11 +13,21 @@ from app.crypto import decrypt_api_key
 from app.db import get_db
 from app.llm.base import ChatMessage
 from app.llm.registry import get_provider
-from app.models import ApiKey, Conversation, Deployment, Message, Project, User
-from app.schemas import ChatRequest, ChatResponse, DeploymentOut, FileChange, MessageOut, PushRequest
+from app.models import ApiKey, Conversation, Deployment, Domain, Message, Project, User
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    DeploymentCallback,
+    DeploymentOut,
+    FileChange,
+    MessageOut,
+    PushRequest,
+)
 from app.security.csrf import verify_csrf
 from app.security.deps import get_current_user
 from app.utils.paths import is_safe_project_path
+
+_CI_WORKFLOW_FILE = "deploy.yml"
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["chat"])
 
@@ -141,15 +153,73 @@ async def push(
         body.commit_message,
     )
 
-    # Phase 4 wires this up to real CI/CD status callbacks; for now the
-    # commit succeeding synchronously is the only signal we have.
+    # A project's bucket doesn't exist until its first domain is registered
+    # (POST /domains — see that router for why bucket creation happens
+    # there, not here). Nothing to sync to yet just means the commit lands
+    # in Git but nothing deploys — not an error, just an incomplete setup.
+    domain = await db.scalar(select(Domain).where(Domain.project_id == project_id))
+
     deployment = Deployment(
         project_id=project_id,
         git_commit_sha=commit_sha,
-        status="success",
-        deployed_at=datetime.now(timezone.utc),
+        status="pending" if domain else "success",
+        deployed_at=None if domain else datetime.now(timezone.utc),
     )
+
+    if domain:
+        # One-time token: hashed at rest (same pattern as refresh tokens —
+        # see security/jwt.py), handed to the CI job via workflow_dispatch
+        # inputs rather than ever being committed to the repo. See
+        # DeploymentCallback / the callback endpoint below for the other
+        # half — it's nulled out there so it can't be replayed.
+        raw_token = secrets.token_urlsafe(32)
+        deployment.callback_token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+
     db.add(deployment)
     await db.commit()
     await db.refresh(deployment)
+
+    if domain:
+        await gitea_client.dispatch_workflow(
+            project.git_repo_path,
+            _CI_WORKFLOW_FILE,
+            {
+                "bucket_name": domain.s3_bucket_name,
+                "project_id": str(project_id),
+                "deployment_id": str(deployment.id),
+                "callback_token": raw_token,
+            },
+        )
+
     return deployment
+
+
+@router.post("/deployments/{deployment_id}/callback", include_in_schema=False)
+async def deployment_callback(
+    project_id: uuid.UUID,
+    deployment_id: uuid.UUID,
+    body: DeploymentCallback,
+    db: AsyncSession = Depends(get_db),
+):
+    # No get_current_user/CSRF here on purpose — the CI job calling this
+    # isn't a logged-in browser session, it authenticates purely via the
+    # token. See DeploymentCallback's docstring.
+    deployment = await db.get(Deployment, deployment_id)
+    if (
+        deployment is None
+        or deployment.project_id != project_id
+        or deployment.callback_token_hash is None
+        or not secrets.compare_digest(
+            deployment.callback_token_hash, hashlib.sha256(body.token.encode()).hexdigest()
+        )
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+
+    if body.status not in ("success", "failed"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status")
+
+    deployment.status = body.status
+    deployment.deployed_at = datetime.now(timezone.utc)
+    deployment.callback_token_hash = None  # single-use — a replay of this same callback now 404s
+    await db.commit()
+    return {"ok": True}

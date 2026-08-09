@@ -67,3 +67,20 @@ async def commit_files(repo_path: str, files: dict[str, str], message: str) -> s
     for file_path, content in files.items():
         sha = await create_or_update_file(repo_path, file_path, content, message)
     return sha
+
+
+async def dispatch_workflow(repo_path: str, workflow_file: str, inputs: dict[str, str]) -> None:
+    """Triggers a `workflow_dispatch`-triggered workflow (see
+    .gitea/workflows/deploy.yml, seeded into every project repo at creation
+    in projects.py) with the given inputs. Deliberately used instead of a
+    plain `on: push` trigger: it's the only way to hand the workflow a
+    per-deployment one-time callback token without ever writing that token
+    into the repo/commit itself (see chat.py's push() for where the token
+    is generated)."""
+    owner, repo = repo_path.split("/", 1)
+    async with _client() as client:
+        response = await client.post(
+            f"/api/v1/repos/{owner}/{repo}/actions/workflows/{workflow_file}/dispatches",
+            json={"ref": "main", "inputs": inputs},
+        )
+        response.raise_for_status()

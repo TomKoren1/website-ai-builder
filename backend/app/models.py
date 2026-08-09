@@ -114,3 +114,9 @@ class Deployment(Base):
     status: Mapped[str] = mapped_column(default="pending")  # pending | success | failed
     created_at: Mapped[datetime] = mapped_column(_TZ, server_default=func.now())
     deployed_at: Mapped[datetime | None] = mapped_column(_TZ, default=None)
+    # Hash of the one-time token handed to the CI workflow dispatch (see
+    # chat.py's push()) — same hash-not-plaintext, single-use pattern as
+    # refresh tokens. Set to NULL once consumed by the callback, so a
+    # replayed callback (or one arriving after a second push superseded
+    # it) can't succeed twice.
+    callback_token_hash: Mapped[str | None] = mapped_column(default=None)

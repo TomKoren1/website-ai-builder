@@ -1,0 +1,6 @@
+apiVersion: v2
+name: reverse-proxy
+description: Resolves domain -> S3 bucket and proxies static site content (Flow B)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

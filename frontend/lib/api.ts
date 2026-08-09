@@ -148,10 +148,12 @@ export const deleteApiKey = (id: string) => request<void>(`/api-keys/${id}`, { m
 
 // --- domains ---
 
-export const createDomain = (project_id: string, domain_name: string, s3_bucket_name: string) =>
+// No s3_bucket_name param — the backend generates it (site-{project_id})
+// and creates the bucket itself; see backend/app/routers/domains.py.
+export const createDomain = (project_id: string, domain_name: string) =>
   request<Domain>("/domains", {
     method: "POST",
-    body: JSON.stringify({ project_id, domain_name, s3_bucket_name }),
+    body: JSON.stringify({ project_id, domain_name }),
   });
 
 // --- chat / push ---

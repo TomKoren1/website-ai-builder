@@ -1,0 +1,24 @@
+# sync-wave 1: after the namespace exists, alongside frontend. Assumes the
+# `backend-secrets` Secret already exists in the ai-builder namespace
+# (created out-of-band — see infra/PHASE4-RUNBOOK.md) and that the
+# ai-builder-backend:local image has been built + `kind load docker-image`d.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: backend
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TomKoren1/website-ai-builder.git
+    targetRevision: main
+    path: helm/backend
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai-builder
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,23 @@
+# sync-wave 1: alongside backend/frontend. Assumes reverse-proxy-secrets
+# exists (see infra/PHASE4-RUNBOOK-B.md) and ai-builder-reverse-proxy:local
+# has been built + `kind load docker-image`d.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reverse-proxy
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/TomKoren1/website-ai-builder.git
+    targetRevision: main
+    path: helm/reverse-proxy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai-builder
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

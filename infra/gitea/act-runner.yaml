@@ -1,0 +1,73 @@
+# Gitea Actions needs a runner registered against the instance before any
+# workflow_dispatch call actually executes anything — enabling
+# gitea.config.actions.ENABLED (values.yaml) alone just means jobs queue
+# forever with nothing to pick them up.
+#
+# Hand-written rather than a Helm chart, same reasoning as
+# infra/postgres/manifests.yaml — this is a two-container Deployment, not
+# worth a chart. Runs a Docker-in-Docker sidecar because act_runner needs a
+# Docker daemon to execute `runs-on: ubuntu-latest` jobs in containers, and
+# there's no host Docker socket to reuse safely inside Kind.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: act-runner
+  namespace: gitea
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: act-runner
+  template:
+    metadata:
+      labels:
+        app: act-runner
+    spec:
+      containers:
+        - name: dind
+          image: docker:24-dind
+          securityContext:
+            privileged: true # required for Docker-in-Docker — no way around it for this sidecar pattern
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: "" # disables TLS between act_runner and this sidecar — fine, they're in the same pod, never leaves it
+          volumeMounts:
+            - name: docker-sock
+              mountPath: /var/run
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+        - name: runner
+          image: gitea/act_runner:latest
+          env:
+            - name: DOCKER_HOST
+              value: unix:///var/run/docker.sock
+            - name: GITEA_INSTANCE_URL
+              value: http://gitea-http.gitea.svc.cluster.local:3000
+            # One-time registration token — created out-of-band as a
+            # Secret (see PHASE4-RUNBOOK-B.md), not committed to Git.
+            # act_runner's entrypoint registers itself on first start using
+            # this, then discards it in favor of the credentials it
+            # persists to its own state.
+            - name: GITEA_RUNNER_REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: act-runner-token
+                  key: token
+          volumeMounts:
+            - name: docker-sock
+              mountPath: /var/run
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: docker-sock
+          emptyDir: {}
