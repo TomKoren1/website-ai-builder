@@ -1,4 +1,5 @@
 import base64
+from urllib.parse import quote
 
 import httpx
 
@@ -36,17 +37,23 @@ async def create_or_update_file(repo_path: str, file_path: str, content: str, me
     """repo_path is "owner/name" (e.g. what create_repo returned). Returns the new commit sha."""
     owner, repo = repo_path.split("/", 1)
     encoded = base64.b64encode(content.encode()).decode()
+    # Encode each segment separately (not the whole path at once) so the
+    # "/" separators stay intact while everything else — including any
+    # character is_safe_project_path didn't anticipate — gets escaped
+    # before it ever becomes part of a URL. Defense in depth: this holds
+    # even if the caller forgot to validate the path at all.
+    url_path = "/".join(quote(segment, safe="") for segment in file_path.split("/"))
 
     async with _client() as client:
         # Gitea requires the file's current sha on update but not on create —
         # check existence first rather than branching on a failed PUT.
-        existing = await client.get(f"/api/v1/repos/{owner}/{repo}/contents/{file_path}")
+        existing = await client.get(f"/api/v1/repos/{owner}/{repo}/contents/{url_path}")
         body = {"content": encoded, "message": message, "branch": "main"}
         if existing.status_code == 200:
             body["sha"] = existing.json()["sha"]
-            response = await client.put(f"/api/v1/repos/{owner}/{repo}/contents/{file_path}", json=body)
+            response = await client.put(f"/api/v1/repos/{owner}/{repo}/contents/{url_path}", json=body)
         else:
-            response = await client.post(f"/api/v1/repos/{owner}/{repo}/contents/{file_path}", json=body)
+            response = await client.post(f"/api/v1/repos/{owner}/{repo}/contents/{url_path}", json=body)
         response.raise_for_status()
         return response.json()["commit"]["sha"]
 
