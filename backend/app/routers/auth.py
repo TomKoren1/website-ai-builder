@@ -9,7 +9,9 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import Session as SessionModel
 from app.models import User
-from app.schemas import LoginRequest, RegisterRequest, TokenResponse
+from app.schemas import LoginRequest, RegisterRequest, TokenResponse, UserOut
+from app.security.csrf import CSRF_COOKIE, generate_csrf_token, verify_csrf
+from app.security.deps import get_current_user
 from app.security.jwt import create_access_token, generate_refresh_token, hash_refresh_token
 from app.security.passwords import hash_password, verify_password
 
@@ -19,13 +21,19 @@ settings = get_settings()
 _ACCESS_COOKIE = "access_token"
 _REFRESH_COOKIE = "refresh_token"
 
+# Secure requires HTTPS — real deployments always set it; local dev runs
+# `next dev` over plain HTTP, and a Secure cookie is silently refused by
+# the browser there (not an error, just never stored), so it must be
+# environment-gated rather than hardcoded True.
+_COOKIE_SECURE = settings.environment != "local"
+
 
 def _set_cookies(response: Response, access_token: str, refresh_token: str) -> None:
     response.set_cookie(
         _ACCESS_COOKIE,
         access_token,
         httponly=True,
-        secure=True,
+        secure=_COOKIE_SECURE,
         samesite="strict",
         max_age=settings.jwt_access_token_ttl_minutes * 60,
     )
@@ -36,10 +44,21 @@ def _set_cookies(response: Response, access_token: str, refresh_token: str) -> N
         _REFRESH_COOKIE,
         refresh_token,
         httponly=True,
-        secure=True,
+        secure=_COOKIE_SECURE,
         samesite="strict",
         max_age=settings.jwt_refresh_token_ttl_days * 24 * 60 * 60,
         path="/auth/refresh",
+    )
+    # Deliberately NOT httponly — see app/security/csrf.py for why.
+    # Path "/" (unlike the refresh cookie): every state-changing endpoint
+    # needs the frontend to have this available, not just /auth/refresh.
+    response.set_cookie(
+        CSRF_COOKIE,
+        generate_csrf_token(),
+        httponly=False,
+        secure=_COOKIE_SECURE,
+        samesite="strict",
+        max_age=settings.jwt_refresh_token_ttl_days * 24 * 60 * 60,
     )
 
 
@@ -78,7 +97,7 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     return TokenResponse(access_token=access_token)
 
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post("/refresh", response_model=TokenResponse, dependencies=[Depends(verify_csrf)])
 async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     raw_refresh = request.cookies.get(_REFRESH_COOKIE)
     if not raw_refresh:
@@ -102,7 +121,7 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     return TokenResponse(access_token=access_token)
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verify_csrf)])
 async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     raw_refresh = request.cookies.get(_REFRESH_COOKIE)
     if raw_refresh:
@@ -114,3 +133,11 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 
     response.delete_cookie(_ACCESS_COOKIE)
     response.delete_cookie(_REFRESH_COOKIE, path="/auth/refresh")
+    response.delete_cookie(CSRF_COOKIE)
+
+
+@router.get("/me", response_model=UserOut)
+async def me(user: User = Depends(get_current_user)):
+    # GET, not a state change, so deliberately no CSRF dependency — this is
+    # what the frontend polls on load to learn "am I logged in, and as who."
+    return user

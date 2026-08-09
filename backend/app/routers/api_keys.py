@@ -8,6 +8,7 @@ from app.crypto import encrypt_api_key
 from app.db import get_db
 from app.models import ApiKey, User
 from app.schemas import ApiKeyCreate, ApiKeyOut
+from app.security.csrf import verify_csrf
 from app.security.deps import get_current_user
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
@@ -25,7 +26,9 @@ async def list_api_keys(user: User = Depends(get_current_user), db: AsyncSession
     return result.all()
 
 
-@router.post("", response_model=ApiKeyOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=ApiKeyOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verify_csrf)]
+)
 async def create_api_key(
     body: ApiKeyCreate,
     user: User = Depends(get_current_user),
@@ -54,7 +57,7 @@ async def create_api_key(
     return key
 
 
-@router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verify_csrf)])
 async def delete_api_key(
     key_id: uuid.UUID,
     user: User = Depends(get_current_user),

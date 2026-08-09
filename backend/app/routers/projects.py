@@ -8,12 +8,13 @@ from app import gitea_client
 from app.db import get_db
 from app.models import Project, User
 from app.schemas import ProjectCreate, ProjectOut
+from app.security.csrf import verify_csrf
 from app.security.deps import get_current_user
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-@router.post("", response_model=ProjectOut)
+@router.post("", response_model=ProjectOut, dependencies=[Depends(verify_csrf)])
 async def create_project(
     body: ProjectCreate,
     user: User = Depends(get_current_user),

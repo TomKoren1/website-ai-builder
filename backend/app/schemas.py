@@ -14,6 +14,13 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    email: EmailStr
+    created_at: datetime
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -58,6 +65,13 @@ class DomainOut(BaseModel):
     domain_name: str
     s3_bucket_name: str
     verified: bool
+    created_at: datetime
+
+
+class MessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    role: str
+    content: str
     created_at: datetime
 
 

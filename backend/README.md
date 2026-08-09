@@ -24,8 +24,8 @@ backend/
 
 | File | What it does |
 |---|---|
-| `main.py` | FastAPI app instance. Wires every router in `app/routers/` into the app. Entry point for `uvicorn app.main:app`. |
-| `config.py` | `Settings` (pydantic-settings) — the single source of truth for every env var. Reads `.env` locally; reads real environment variables once deployed. Everything else imports `get_settings()` rather than touching `os.environ` directly. |
+| `main.py` | FastAPI app instance. Wires every router in `app/routers/` into the app, plus CORS middleware (allows only `settings.frontend_origin`, credentials on — required for the browser to send/receive auth cookies cross-origin to the Next dev server). Entry point for `uvicorn app.main:app`. |
+| `config.py` | `Settings` (pydantic-settings) — the single source of truth for every env var. Reads `.env` locally; reads real environment variables once deployed. Everything else imports `get_settings()` rather than touching `os.environ` directly. Includes `environment` (gates the cookie `Secure` flag — off for `next dev`'s plain-HTTP local server) and `frontend_origin` (the CORS allowlist entry). |
 | `db.py` | SQLAlchemy async engine + session factory + declarative `Base`. `get_db()` is the FastAPI dependency every route uses to get a DB session. |
 | `models.py` | SQLAlchemy ORM models — the 7 tables from `overview.md` (`users`, `sessions`, `projects`, `domains`, `api_keys`, `conversations`, `messages`, `deployments`). This is the schema's source of truth; Alembic migrations are generated *from* this file, not the other way around. |
 | `schemas.py` | Pydantic request/response models (what the API actually accepts and returns) — deliberately separate from `models.py` (the DB shape) so the two can diverge, e.g. `ApiKeyOut` never has a `ciphertext` field even though the DB row does. |
@@ -39,6 +39,7 @@ backend/
 | `passwords.py` | Argon2 password hashing (`hash_password`/`verify_password`). |
 | `jwt.py` | Access-token creation/verification (JWT, HS256) and refresh-token generation/hashing. Refresh tokens are opaque random strings, hashed with SHA-256 before storage — not JWTs, since they're checked against the DB anyway (to support revocation). |
 | `deps.py` | `get_current_user` — the FastAPI dependency every protected route depends on. Reads the access token from either an httpOnly cookie or an `Authorization: Bearer` header, verifies it, loads the `User`. |
+| `csrf.py` | Double-submit CSRF protection. `verify_csrf` is a dependency applied to every state-changing route: compares the non-httpOnly `csrf_token` cookie against an `X-CSRF-Token` header the frontend must echo back. An attacker's cross-site request can ride on auto-attached cookies but can't read the cookie's value to also set a matching header. Not applied to `register`/`login` (no CSRF cookie exists yet at that point) or any `GET`. |
 
 ### `app/aws/` — talking to LocalStack (later: real AWS)
 
@@ -60,11 +61,11 @@ backend/
 
 | File | Endpoints | What it does |
 |---|---|---|
-| `auth.py` | `POST /auth/register`, `/login`, `/refresh`, `/logout` | Issues JWT access tokens + rotating hashed refresh tokens, both as httpOnly cookies. |
+| `auth.py` | `POST /auth/register`, `/login`, `/refresh`, `/logout`, `GET /auth/me` | Issues JWT access tokens + rotating hashed refresh tokens (httpOnly cookies) + a CSRF token (non-httpOnly). `/me` returns the current user — how the frontend learns "am I logged in," since the access token itself is unreadable by JS by design. |
 | `projects.py` | `POST /projects`, `GET /projects`, `GET /projects/{id}` | Creates a project + its backing Gitea repo; lists/fetches a user's own projects. |
 | `api_keys.py` | `POST /api-keys`, `GET /api-keys`, `DELETE /api-keys/{id}` | Encrypt-on-write via `crypto.py`; reads only ever return `display_hint` (a masked preview), never plaintext. |
 | `domains.py` | `POST /domains` | Records a project's custom-domain → S3-bucket mapping (consumed later by the reverse-proxy design from `overview.md` Phase 1). |
-| `chat.py` | `POST /projects/{id}/chat`, `POST /projects/{id}/push` | The core AI loop — see `WORKFLOW.md` for the full request lifecycle. |
+| `chat.py` | `GET /projects/{id}/messages`, `POST /projects/{id}/chat`, `POST /projects/{id}/push` | The core AI loop, plus `/messages` for the frontend to reconstruct chat history + accumulated files on page load. See `WORKFLOW.md` for the full request lifecycle. |
 
 ### `app/utils/`
 

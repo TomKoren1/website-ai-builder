@@ -9,6 +9,7 @@ infra/terraform/*.tfvars
 infra/localstack/.auth-token
 *.env
 !*.env.example
+cookies.txt
 
 # Python
 backend/__pycache__/

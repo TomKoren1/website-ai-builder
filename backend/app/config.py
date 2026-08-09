@@ -8,6 +8,12 @@ class Settings(BaseSettings):
 
     database_url: str
 
+    # "local" disables the cookie Secure flag (browsers refuse to store
+    # Secure cookies over plain HTTP, which `next dev` uses) — never set
+    # this to anything but "local" outside your own machine.
+    environment: str = "local"
+    frontend_origin: str = "http://localhost:3000"
+
     jwt_secret: str
     jwt_access_token_ttl_minutes: int = 15
     jwt_refresh_token_ttl_days: int = 30

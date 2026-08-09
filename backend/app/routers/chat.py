@@ -12,7 +12,8 @@ from app.db import get_db
 from app.llm.base import ChatMessage
 from app.llm.registry import get_provider
 from app.models import ApiKey, Conversation, Deployment, Message, Project, User
-from app.schemas import ChatRequest, ChatResponse, DeploymentOut, FileChange, PushRequest
+from app.schemas import ChatRequest, ChatResponse, DeploymentOut, FileChange, MessageOut, PushRequest
+from app.security.csrf import verify_csrf
 from app.security.deps import get_current_user
 from app.utils.paths import is_safe_project_path
 
@@ -47,7 +48,26 @@ async def _get_or_create_conversation(project_id: uuid.UUID, db: AsyncSession) -
     return conversation
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.get("/messages", response_model=list[MessageOut])
+async def get_messages(
+    project_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # How the frontend reconstructs chat history + accumulated files on
+    # page load — without this, every reload starts from empty React
+    # state even though the backend has the full conversation all along.
+    await _get_owned_project(project_id, user, db)
+    conversation = await db.scalar(select(Conversation).where(Conversation.project_id == project_id))
+    if conversation is None:
+        return []
+    rows = await db.scalars(
+        select(Message).where(Message.conversation_id == conversation.id).order_by(Message.created_at)
+    )
+    return rows.all()
+
+
+@router.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_csrf)])
 async def chat(
     project_id: uuid.UUID,
     body: ChatRequest,
@@ -102,7 +122,7 @@ async def chat(
     return ChatResponse(reply=reply_text, proposed_files=files)
 
 
-@router.post("/push", response_model=DeploymentOut)
+@router.post("/push", response_model=DeploymentOut, dependencies=[Depends(verify_csrf)])
 async def push(
     project_id: uuid.UUID,
     body: PushRequest,

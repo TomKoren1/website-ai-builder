@@ -4,12 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.models import Domain, Project, User
 from app.schemas import DomainCreate, DomainOut
+from app.security.csrf import verify_csrf
 from app.security.deps import get_current_user
 
 router = APIRouter(prefix="/domains", tags=["domains"])
 
 
-@router.post("", response_model=DomainOut)
+@router.post("", response_model=DomainOut, dependencies=[Depends(verify_csrf)])
 async def create_domain(
     body: DomainCreate,
     user: User = Depends(get_current_user),

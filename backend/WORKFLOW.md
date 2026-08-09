@@ -35,25 +35,44 @@ register/login
   → issue refresh token (random 256-bit string)
        - raw token  → httpOnly cookie, scoped to /auth/refresh only
        - sha256(token) → stored in `sessions.refresh_token_hash`
-  → both tokens set as Set-Cookie on the response
+  → issue a CSRF token (random string) → NON-httpOnly cookie, path "/"
+  → all three set as Set-Cookie on the response
+       (CSRF cookie deliberately readable by JS — see below)
 
 every protected route
   → reads access token from cookie OR `Authorization: Bearer`
   → verifies JWT signature + expiry
   → loads User by the `sub` claim
 
-refresh
+every state-changing route (POST/DELETE — not GET, not register/login)
+  → verify_csrf: compare the csrf_token cookie against an X-CSRF-Token
+    request header the frontend must set itself
+  → reject (403) if either is missing or they don't match
+  → why this works: an attacker's cross-site page can trigger a request
+    that carries our cookies automatically (that's what SameSite=strict
+    already blocks in most cases), but same-origin policy stops that page
+    from ever reading the cookie's *value* — so it can't also produce a
+    matching header. This is defense-in-depth on top of SameSite, not a
+    replacement for it.
+
+refresh (itself CSRF-protected, since it's state-changing)
   → look up sessions row by sha256(cookie's raw refresh token)
   → reject if missing or expired
-  → ROTATE: overwrite that row's hash + expiry, mint new access+refresh tokens
+  → ROTATE: overwrite that row's hash + expiry, mint new access+refresh
+    tokens AND a new CSRF token
   → old refresh token cookie is now worthless — replaying it fails the hash lookup
 
-logout
+logout (also CSRF-protected)
   → delete the sessions row matching the current refresh cookie
-  → clear both cookies
+  → clear all three cookies
+
+GET /auth/me
+  → just get_current_user, no CSRF check (it's a read)
+  → how the frontend learns "am I logged in, and as who" on page load,
+    since the access token itself can't be read by JS to check directly
 ```
 
-**Where it's stored**: `users` (email, argon2 hash), `sessions` (hashed refresh token + expiry — never the raw token). The JWT access token itself is never persisted anywhere; it's stateless, verified by signature alone.
+**Where it's stored**: `users` (email, argon2 hash), `sessions` (hashed refresh token + expiry — never the raw token). The JWT access token and the CSRF token are never persisted anywhere server-side; the access token is stateless (verified by signature), and the CSRF token is verified by simple cookie/header equality, not a DB lookup.
 
 ## Creating a project
 
