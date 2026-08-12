@@ -1,13 +1,10 @@
 image:
-  repository: ai-builder-frontend
-  tag: local
+  repository: ghcr.io/tomkoren1/ai-builder-frontend
+  tag: e6a4c64
   pullPolicy: IfNotPresent
-
 replicaCount: 1
-
 service:
   port: 3000
-
 resources:
   requests:
     cpu: 100m
