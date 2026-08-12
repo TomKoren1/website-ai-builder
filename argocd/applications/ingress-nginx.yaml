@@ -1,0 +1,36 @@
+# Adoption, not a fresh install — ingress-nginx was already running
+# (installed imperatively by infra/up.ps1) before this Application existed.
+# Pinned to 4.15.1 because that's the exact chart version already live
+# (`helm list -n ingress-nginx`) — this migration is a pure ownership
+# change, not bundled with an incidental version bump.
+#
+# syncPolicy deliberately has no `automated` block yet: apply this,
+# inspect the computed diff (`kubectl get application ingress-nginx -n
+# argocd -o yaml` — status.resources / status.sync.status), and only
+# after confirming it's clean, trigger a manual sync and then add
+# automated (see docs/errors.md for why "should diff clean" isn't good
+# enough on its own for this specific component — its own Recreate
+# strategy value already burned us once).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: https://kubernetes.github.io/ingress-nginx
+      chart: ingress-nginx
+      targetRevision: "4.15.1"
+      helm:
+        valueFiles:
+          - $values/infra/ingress/ingress-nginx-values.yaml
+    - repoURL: https://github.com/TomKoren1/website-ai-builder.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ingress-nginx
+  syncPolicy: {}

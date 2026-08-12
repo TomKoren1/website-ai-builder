@@ -1,0 +1,36 @@
+# Adoption, not a fresh install — see ingress-nginx.yaml's comment for the
+# full reasoning (same pattern). Pinned to 0.7.0, the exact chart version
+# already live (`helm list -n localstack`).
+#
+# Depends on the `localstack-auth` Secret already existing in the
+# `localstack` namespace (created out-of-band by up.ps1 — see
+# infra/PHASE1-RUNBOOK.md step 0.5). It already does on this cluster;
+# on a from-scratch cluster, up.ps1 must still be run first for exactly
+# this reason — this Application is an ownership handoff after Phase 1's
+# bootstrap, not a replacement for it.
+#
+# syncPolicy deliberately has no `automated` block yet — same manual-diff-
+# first approach as ingress-nginx.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: localstack
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: https://localstack.github.io/helm-charts
+      chart: localstack
+      targetRevision: "0.7.0"
+      helm:
+        valueFiles:
+          - $values/infra/localstack/values.yaml
+    - repoURL: https://github.com/TomKoren1/website-ai-builder.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: localstack
+  syncPolicy: {}
