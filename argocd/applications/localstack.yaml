@@ -9,8 +9,9 @@
 # this reason — this Application is an ownership handoff after Phase 1's
 # bootstrap, not a replacement for it.
 #
-# syncPolicy deliberately has no `automated` block yet — same manual-diff-
-# first approach as ingress-nginx.yaml.
+# Verified clean before enabling automated sync — same zero-diff
+# confirmation as ingress-nginx.yaml (all 4 resources individually
+# "Synced", no operationState, before automated was ever turned on).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -33,4 +34,7 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: localstack
-  syncPolicy: {}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

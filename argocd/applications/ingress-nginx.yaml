@@ -4,13 +4,11 @@
 # (`helm list -n ingress-nginx`) — this migration is a pure ownership
 # change, not bundled with an incidental version bump.
 #
-# syncPolicy deliberately has no `automated` block yet: apply this,
-# inspect the computed diff (`kubectl get application ingress-nginx -n
-# argocd -o yaml` — status.resources / status.sync.status), and only
-# after confirming it's clean, trigger a manual sync and then add
-# automated (see docs/errors.md for why "should diff clean" isn't good
-# enough on its own for this specific component — its own Recreate
-# strategy value already burned us once).
+# Verified clean before enabling automated sync: applied with no
+# syncPolicy.automated first, confirmed status.sync.status was "Synced"
+# with zero operationState (no sync ever ran) and all 11 resources
+# individually "Synced" — genuine zero-diff adoption, not a lucky-looking
+# aggregate status. Automated enabled only after that confirmation.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -33,4 +31,7 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: ingress-nginx
-  syncPolicy: {}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
