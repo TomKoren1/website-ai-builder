@@ -9,6 +9,18 @@
 # from the prometheus-community repo, this file supplies the values. See
 # that file's comments for why multi-source instead of vendoring the chart.
 
+# CRDs installed once, manually, outside Argo CD's management — see
+# docs/errors.md. Even with ServerSideApply=true (below), Argo CD's own
+# sync pipeline still failed on these ("metadata.annotations: Too long")
+# while a plain `kubectl apply --server-side` on the exact same files
+# succeeded immediately — an Argo CD-specific limitation with these
+# particular CRDs, not a general SSA limitation. Same category as
+# installing Argo CD itself imperatively (PHASE4-RUNBOOK.md) rather than
+# through itself — CRDs rarely change, and there's no real GitOps value
+# in re-fighting this on every sync.
+crds:
+  enabled: false
+
 prometheus:
   prometheusSpec:
     # The chart's Prometheus CR only auto-discovers ServiceMonitors/
