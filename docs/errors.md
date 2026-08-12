@@ -185,3 +185,79 @@ Real problems hit while building this project, why they happened, and how they w
 **Fix:** Added `project_id` as its own explicit `workflow_dispatch` input, passed alongside `bucket_name`/`deployment_id`/`callback_token` from `chat.py`'s dispatch call, rather than trying to derive it from anything Gitea already provides.
 
 **Lesson:** When wiring a callback across two systems that each have their own notion of "this project's ID," don't reach for whatever identifier happens to be available in the immediate context (`github.event.*` here) — trace it back to confirm it's actually *the same* identifier the receiving endpoint expects, not just a plausible-looking one.
+
+### `PHASE4-RUNBOOK.md` steps 3/4 ordered backwards
+
+**What happened:** Following the runbook step-by-step, the `ai-builder` namespace didn't exist yet when the step telling you to create `backend-secrets -n ai-builder` came up — hit while actually executing the runbook, not caught during review.
+
+**Why:** The original step 3 ("Create the Secret") contained its own note saying "this has to happen after the namespace exists (step 4)" — the dependency was correctly identified in the text, but the steps were numbered in the wrong order regardless. Writing the *explanation* of a dependency doesn't substitute for actually checking the numbering agrees with it.
+
+**Fix:** Swapped the two steps — bootstrapping the app-of-apps (which creates the namespace) is now step 3, creating the Secret is step 4.
+
+**Lesson:** A runbook that explicitly narrates its own step ordering ("this has to happen after step N") is a signal to double check the steps are actually in that order, not a substitute for it — the contradiction was sitting in plain text and still shipped.
+
+### ingress-nginx stuck `Pending` after a `helm upgrade` — RollingUpdate can't work with hostPort on one node
+
+**What happened:** After changing `infra/ingress/ingress-nginx-values.yaml` (adding `default-backend-service`) and running `helm upgrade`, the new controller pod sat `Pending` forever while the *old* pod kept serving all traffic with the stale config — `curl` kept returning nginx's own generic 404 page instead of anything from the reverse-proxy, with no error anywhere to explain why.
+
+**Why:** `infra/kind/kind-config.yaml`'s whole approach to getting real HTTP into Kind is the controller binding the node's own 80/443 directly (`hostPort`). On a single-node cluster, only one pod can ever hold those ports at a time. The Helm chart's default rollout strategy is `RollingUpdate`, which tries to start the *new* pod before killing the *old* one — but the old pod is still holding the ports, so the new one can never schedule (`0/1 nodes are available: didn't have free ports`), and the rollout never completes.
+
+**Fix:** Set `controller.updateStrategy.type: Recreate` in `ingress-nginx-values.yaml` — kills the old pod first, freeing the ports, then starts the new one. Exactly the same underlying cause as the Gitea `strategy: Recreate` decision already documented in `infra/gitea/values.yaml` (there it was a single-writer leveldb lock, not a port; same fix for a different resource-exclusivity reason).
+
+**Lesson:** Anything using `hostPort` on a single-node cluster needs `Recreate`, not `RollingUpdate`, as a matter of course — not something to discover after the fact. Worth checking any *other* hostPort-bound component in this project (there's only the one, ingress-nginx, but it's the kind of thing to default to for the pattern generally).
+
+### Manually deleting the stuck pod didn't fix it — the old ReplicaSet just replaced it
+
+**What happened:** As an attempted quick fix for the above (before adding `Recreate`), the old pod was deleted directly (`kubectl delete pod`). A *different* pod immediately appeared, still under the *old* ReplicaSet hash, also stuck `Pending` — no closer to fixed.
+
+**Why:** The old ReplicaSet's desired replica count was still 1 (it was never scaled down — the rollout never got far enough to do that, since the new pod could never become `Ready`). Deleting its pod directly just made the ReplicaSet controller spawn a replacement to maintain that count, which then competed for the exact same port as the original stuck new-ReplicaSet pod. Same problem, different pod name.
+
+**Fix:** Applying the `Recreate` strategy change (previous entry) and re-running `helm upgrade` was what actually resolved it — `Recreate` scales the *entire* Deployment (both ReplicaSets) to 0 before creating anything new, so there's no coexistence race to lose.
+
+**Lesson:** A stuck rollout isn't fixed by deleting individual pods — the Deployment/ReplicaSet controllers will just replace what you delete according to whatever desired-count math got the rollout stuck in the first place. Fix the rollout strategy (or scale the Deployment explicitly), not the pods.
+
+### `helm upgrade` rejected the `Recreate` change — stale `rollingUpdate` field left by server-side apply
+
+**What happened:** Even after adding `updateStrategy.type: Recreate` to the values file, `helm upgrade` itself failed: `spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy type is 'Recreate'`.
+
+**Why:** The live Deployment object already had a `strategy.rollingUpdate` block set from before (the chart's default). Helm's server-side apply only sends the fields it wants to *set* — it doesn't automatically clear a field that used to be there and no longer is in the new manifest, especially one that's still "owned" by a prior apply. The merge on the API server's side ended up with both `type: Recreate` and a leftover `rollingUpdate`, which the Deployment API rejects as mutually exclusive.
+
+**Fix:** A one-time manual `kubectl patch --type=json` replacing the *entire* `spec.strategy` object atomically (`[{"op":"replace","path":"/spec/strategy","value":{"type":"Recreate"}}]`), clearing the stale field outright, then re-running `helm upgrade` normally (which then succeeded, since there was nothing left to conflict with).
+
+**Lesson:** Server-side apply's field-ownership model means "change a value in my YAML" and "remove a field my YAML no longer mentions" are not the same operation — the latter can require an explicit clearing step the first time, especially for fields the object couldn't previously have had removed cleanly. Only actually matters when *upgrading* an already-installed release; installing fresh with `Recreate` already in the values file from the start never hits this.
+
+### Gitea's default `ubuntu-latest` runner image has no AWS CLI
+
+**What happened:** The CI workflow's very first `aws` command failed with `aws: command not found`.
+
+**Why:** Gitea Actions' own `docker.gitea.com/runner-images:ubuntu-latest` is a real Ubuntu 24.04 image, but — unlike GitHub's actual hosted `ubuntu-latest` runners, which ship dozens of preinstalled tools including the AWS CLI — it only has the bare essentials (confirmed by exec'ing into it directly: `python3`/`pip3`/`curl`/`unzip` present, `aws` not). Easy to assume "ubuntu-latest" implies the same toolset GitHub's does; it doesn't here.
+
+**Fix:** Added an explicit "Install AWS CLI" step to `.gitea/workflows/deploy.yml` (`projects.py`'s `_CI_WORKFLOW`) using the official AWS CLI v2 installer bundle (curl + unzip + `./aws/install`) — deliberately not `apt`/`pip`: there's no `awscli` apt package on Ubuntu, and `pip install` hits Python 3.12+'s externally-managed-environment restriction (PEP 668) without extra flags. The official installer has neither problem.
+
+**Lesson:** A self-hosted CI runner labeled `ubuntu-latest` is not a promise of tool parity with GitHub's hosted runners of the same name — it's just a label a workflow's `runs-on` happens to match. Verify what's actually in the image (`docker run --rm <image> which <tool>`) rather than assuming.
+
+### `aws` CLI needs an explicit region even against LocalStack
+
+**What happened:** With the CLI now installed and all secrets confirmed correct (see below), `aws sts assume-role` still failed: `NoRegion: You must specify a region.`
+
+**Why:** Nothing in the workflow ever set `AWS_REGION`/`AWS_DEFAULT_REGION` — every *other* AWS caller in this project (backend's `Settings.aws_region`, reverse-proxy's `Settings`) has a `"us-east-1"` default baked into its config class, so this was never noticed as a gap until the one caller (this workflow) with no such default hit it directly. The AWS CLI refuses to run without one regardless of whether the target (LocalStack) actually enforces real regions.
+
+**Fix:** Added `AWS_DEFAULT_REGION: us-east-1` to both the assume-role and `aws s3 sync` steps' `env:` blocks — matching the same default used everywhere else in the project.
+
+**Lesson:** A config default that's silently applied by a settings class everywhere else in a codebase can hide a genuinely missing piece of config until something outside that settings class (a shell script, a CI workflow) needs the same value and doesn't have it.
+
+### Debugging detour: truncated log display looked like missing secrets, but wasn't
+
+**What happened:** Gitea's Actions log view showed `AWS_SECRET_ACCESS_KEY:` with nothing after it and `CI_DEPLOY_ROLE_ARN: ${{ secrets.CI_DEP` (visibly cut off) in the step's `env:` block — read as "these two secrets are empty/unset," leading to deleting and recreating both org secrets from scratch. The exact same failure recurred afterward.
+
+**Why (established after the fact):** A follow-up debug step that printed each variable's actual `${#VAR}` length at runtime (not its value) showed all four secrets were correctly non-empty the whole time (20/40/45/51 characters respectively) — the log line was just visually truncated by Gitea's UI, not evidence of a real problem. The actual failure at that point in time was the separate missing-AWS-CLI issue above, which produced a superficially similar-looking "credentials" error message from `aws` that was easy to misattribute to the secrets themselves.
+
+**Lesson:** A CI log viewer truncating a long line and an actually-empty value can look identical at a glance. When a value's correctness is in question, print a derived, safe-to-share fact about it (a length, a hash prefix, a boolean check) rather than trusting how a log renders it — and don't skip straight to "recreate the credential" before confirming the value itself is actually the problem.
+
+### `act_runner` silently stuck on its first job — resolved by restarting, root cause unconfirmed
+
+**What happened:** The first dispatched workflow run showed `task 1 repo is ...` in the runner's logs and then nothing — no container created (`docker ps -a` empty), no image pull activity in the Docker-in-Docker sidecar, no further log lines, for over ten minutes. `docker.sock` was reachable, DNS to both Gitea and github.com worked fine when tested directly from the runner's shell.
+
+**Fix:** Deleting the `act_runner` pod and letting the Deployment recreate it (a fresh registration against Gitea) unstuck it — the next dispatched job ran normally within seconds.
+
+**Status:** Left as a known flaky first-run behavior, not a root-caused and fixed bug — unlike the LocalStack IAM-enforcement gap, there's no confirmed external explanation here, just that a restart reliably fixed it once. If it recurs, worth checking `act_runner`'s own registration state file (`/data/.runner`) or upgrading past `v0.6.1` before assuming it's this exact issue again.

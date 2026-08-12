@@ -46,15 +46,29 @@ kubectl port-forward -n argocd svc/argocd-server 8080:443
 ```
 → https://localhost:8080, user `admin`.
 
-## 3. Create the ai-builder namespace's Secret
+## 3. Bootstrap the app-of-apps
 
-The `ai-builder` namespace itself is created *by* Argo CD (the
-`infrastructure-namespace` Application, sync-wave -1) — but `backend-secrets`
-holds actual credentials, so like every other credential in this project
-it's created out-of-band, not committed to Git. This has to happen after
-the namespace exists (step 4) but before the backend Application syncs
-successfully (it'll just show `Missing` until this Secret exists — that's
-expected, not a bug).
+Applied once, manually — everything else in `argocd/applications/` is then
+created/updated by Argo CD itself from Git. This is what actually creates
+the `ai-builder` namespace (the `infrastructure-namespace` Application,
+sync-wave -1) — do this before step 4, not after; the Secret there needs
+the namespace to already exist.
+```
+kubectl apply -f argocd/bootstrap/root-application.yaml
+```
+
+Watch it reconcile:
+```
+kubectl get applications -n argocd -w
+```
+Expect, in order: `infrastructure-namespace` → Synced/Healthy, then
+`backend`/`frontend`/`app-ingress` → `Degraded`/`Missing` (expected — they
+need step 4's Secret first, which doesn't exist yet).
+
+## 4. Create the ai-builder namespace's Secret
+
+`backend-secrets` holds actual credentials, so like every other credential
+in this project it's created out-of-band, not committed to Git.
 
 Values come from the same places `backend/.env` already points at
 (`terraform output`, the Gitea token, your `JWT_SECRET`) — see
@@ -70,22 +84,9 @@ kubectl create secret generic backend-secrets -n ai-builder \
   --from-literal=GITEA_ADMIN_TOKEN="<Gitea admin token, same scopes as PHASE2-RUNBOOK: write:organization, write:repository>"
 ```
 
-## 4. Bootstrap the app-of-apps
-
-Applied once, manually — everything else in `argocd/applications/` is then
-created/updated by Argo CD itself from Git:
-```
-kubectl apply -f argocd/bootstrap/root-application.yaml
-```
-
-Watch it reconcile:
-```
-kubectl get applications -n argocd -w
-```
-Expect, in order: `infrastructure-namespace` → Synced/Healthy, then
-`backend`/`frontend`/`app-ingress` → Synced (backend stays `Degraded` until
-step 3's Secret exists — check `kubectl describe application backend -n
-argocd` if it doesn't clear once the Secret is created).
+Argo CD's `selfHeal` picks this up on its own within a few seconds —
+`backend` should flip to `Synced`/`Healthy` without needing a manual sync
+(check `kubectl describe application backend -n argocd` if it doesn't).
 
 ## 5. Run the database migration
 

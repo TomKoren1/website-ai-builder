@@ -44,6 +44,19 @@ jobs:
       - name: Validate site content
         run: test -f index.html || (echo "::error::no index.html at repo root" && exit 1)
 
+      - name: Install AWS CLI
+        # Gitea's own ubuntu-latest runner image (docker.gitea.com/runner-images)
+        # is a real Ubuntu base, unlike GitHub's hosted runners it does NOT
+        # come with the AWS CLI preinstalled. The official installer bundle
+        # (not apt/pip) is what actually works unconditionally here — apt has
+        # no awscli package on Ubuntu, and pip's externally-managed-environment
+        # restriction on 24.04 blocks a plain `pip install`.
+        run: |
+          curl -sS "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+          unzip -q awscliv2.zip
+          ./aws/install
+          rm -rf awscliv2.zip aws
+
       - name: Assume ci-deploy-role
         run: |
           creds=$(aws sts assume-role \\
@@ -59,6 +72,11 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CI_DEPLOY_APP_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
           CI_DEPLOY_ROLE_ARN: ${{ secrets.CI_DEPLOY_ROLE_ARN }}
+          # The AWS CLI refuses to run any command with no region configured,
+          # even against LocalStack where the region is barely meaningful —
+          # matches the us-east-1 default used everywhere else in this
+          # project (backend's Settings.aws_region, reverse-proxy's).
+          AWS_DEFAULT_REGION: us-east-1
 
       - name: Sync to S3
         id: sync
@@ -69,6 +87,7 @@ jobs:
           --exclude ".git/*" --exclude ".gitea/*"
         env:
           AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+          AWS_DEFAULT_REGION: us-east-1
 
       - name: Report status to backend
         if: always()

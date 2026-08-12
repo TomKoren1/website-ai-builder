@@ -60,14 +60,38 @@ Expect `reverse-proxy` to appear and go `Synced`/`Healthy` (it'll be
 ## 6. Point ingress-nginx's default backend at it
 
 `infra/ingress/ingress-nginx-values.yaml` now sets
-`controller.extraArgs.default-backend-service` — this is a values change
-to an already-installed release, so (per the note already in that file
-from Phase 1) it needs a manual upgrade, not just editing the file:
+`controller.extraArgs.default-backend-service` (and `updateStrategy.type:
+Recreate` — see the note below) — this is a values change to an
+already-installed release, so (per the note already in that file from
+Phase 1) it needs a manual upgrade, not just editing the file:
 ```
 helm upgrade ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx -f infra/ingress/ingress-nginx-values.yaml
 ```
 Do this *after* step 5 — the reverse-proxy Service needs to exist first,
 or nginx's default backend points at nothing.
+
+**If this is upgrading an ingress-nginx that was installed before the
+`Recreate` strategy existed in this values file**, the upgrade will likely
+fail outright:
+```
+Deployment.apps "ingress-nginx-controller" is invalid: spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy `type` is 'Recreate'
+```
+This happens because the live Deployment still has a `rollingUpdate` block
+from before, and Helm's server-side apply won't clear a field it isn't
+explicitly told to remove. One-time fix, then re-run the `helm upgrade`
+above:
+```
+kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type=json -p "[{\"op\":\"replace\",\"path\":\"/spec/strategy\",\"value\":{\"type\":\"Recreate\"}}]"
+```
+(A cluster that installs ingress-nginx fresh with this values file from the
+start never hits this — it's only a stale-field issue on an upgrade. Also
+worth knowing: on this single-node Kind setup, `RollingUpdate` genuinely
+cannot succeed for a `hostPort`-bound controller like this one — the new
+pod can never schedule while the old one still holds the ports, so it just
+sits `Pending` forever with no error, and the *old* pod (with the old
+config) keeps serving everything. If you ever see that — `kubectl get pods
+-n ingress-nginx` showing two pods, one `Pending` indefinitely — this
+`Recreate` change is why it's there. See `docs/errors.md`.)
 
 ## 7. Enable Gitea Actions + register a runner
 
@@ -90,6 +114,17 @@ kubectl get pods -n gitea -w   # wait for act-runner-xxx to be 2/2 Running
 Confirm it registered: Gitea UI → Site Administration → Actions → Runners
 should show one online runner.
 
+**If the runner's first job ever gets stuck** — logs show `task N repo is
+...` and then nothing, no error, for many minutes, with `docker ps -a`
+inside the `dind` sidecar staying empty the whole time — this was seen
+once and never root-caused (see `docs/errors.md`). Deleting the pod and
+letting the Deployment recreate it (a fresh registration) reliably
+unstuck it:
+```
+kubectl delete pod -n gitea -l app=act-runner
+kubectl wait --namespace gitea --for=condition=ready pod -l app=act-runner --timeout=120s
+```
+
 ## 8. Create org-level Actions secrets
 
 Every project repo's `.gitea/workflows/deploy.yml` (seeded automatically at
@@ -105,6 +140,17 @@ per-repo duplication:
 | `CI_DEPLOY_ROLE_ARN` | `terraform output -raw ci_deploy_role_arn` |
 | `AWS_ENDPOINT_URL` | `http://localstack.localstack.svc.cluster.local:4566` (in-cluster — the runner pod reaches LocalStack directly, not through the ingress) |
 | `BACKEND_URL` | `http://backend.ai-builder.svc.cluster.local:8000` |
+
+The seeded workflow (`projects.py`'s `_CI_WORKFLOW`) already installs the
+AWS CLI itself and sets `AWS_DEFAULT_REGION` explicitly — Gitea's own
+`ubuntu-latest` runner image doesn't ship the AWS CLI the way GitHub's
+hosted runners do, and the CLI refuses to run with no region configured
+even against LocalStack (see `docs/errors.md` for both). If your `backend`
+image predates this, rebuild/redeploy it (step 1 of `PHASE4-RUNBOOK.md`)
+before testing — otherwise every *new* project already gets the fixed
+workflow, but any project created before the fix has the old, broken
+version committed in its repo and needs its `.gitea/workflows/deploy.yml`
+edited by hand (Gitea UI) to pick up the fix.
 
 ## 9. End-to-end test
 

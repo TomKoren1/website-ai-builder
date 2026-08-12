@@ -8,6 +8,17 @@
 controller:
   hostPort:
     enabled: true
+  # Same lesson as infra/gitea/values.yaml's `strategy: Recreate` comment,
+  # hitting the same underlying cause here: this controller binds the
+  # node's own 80/443 directly (hostPort, see above) on a single-node Kind
+  # cluster. Default RollingUpdate tries to schedule the new pod *before*
+  # killing the old one — but there's only one node, and the old pod is
+  # still holding those ports, so the new pod sits Pending forever
+  # ("0/1 nodes are available: didn't have free ports") while the OLD pod
+  # (with whatever args/config predates this values change) keeps serving
+  # all traffic. Recreate kills the old pod first, freeing the ports.
+  updateStrategy:
+    type: Recreate
   service:
     type: ClusterIP
   nodeSelector:
