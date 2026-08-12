@@ -1,0 +1,59 @@
+# Same pattern as backend-image.yml — see its comments for the reasoning.
+name: Build & deploy frontend image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-image.yml"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          # NEXT_PUBLIC_API_URL is baked in at build time (see
+          # frontend/Dockerfile) — not overridden here, so it uses the
+          # Dockerfile's own default (http://app.local/api), which is
+          # already the correct in-cluster-serving value.
+          tags: ghcr.io/tomkoren1/ai-builder-frontend:${{ steps.vars.outputs.sha_short }}
+
+      - name: Bump Helm image tag and commit
+        run: |
+          yq -i '.image.repository = "ghcr.io/tomkoren1/ai-builder-frontend"' helm/frontend/values.yaml
+          yq -i '.image.tag = "${{ steps.vars.outputs.sha_short }}"' helm/frontend/values.yaml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/frontend/values.yaml
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "chore(frontend): deploy image ${{ steps.vars.outputs.sha_short }} [skip ci]"
+          git pull --rebase origin main
+          git push

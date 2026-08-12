@@ -1,0 +1,63 @@
+# Builds+pushes the backend image to GHCR on every change under backend/,
+# then bumps helm/backend/values.yaml's image tag in the same commit —
+# Argo CD's existing automated sync (argocd/applications/backend.yaml)
+# picks that up and redeploys. This is the "CI updates the GitOps repo"
+# pattern named (but not built) in overview.md's Phase 4 plan — no
+# separate Argo CD Image Updater needed since this repo IS the GitOps
+# repo (see argocd/README.md on why that's a deliberate monorepo choice).
+name: Build & deploy backend image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-image.yml"
+
+# contents: write - to commit the tag bump back to main
+# packages: write - to push the image to GHCR
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: true
+          tags: ghcr.io/tomkoren1/ai-builder-backend:${{ steps.vars.outputs.sha_short }}
+
+      - name: Bump Helm image tag and commit
+        run: |
+          yq -i '.image.repository = "ghcr.io/tomkoren1/ai-builder-backend"' helm/backend/values.yaml
+          yq -i '.image.tag = "${{ steps.vars.outputs.sha_short }}"' helm/backend/values.yaml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/backend/values.yaml
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "chore(backend): deploy image ${{ steps.vars.outputs.sha_short }} [skip ci]"
+          git pull --rebase origin main
+          git push

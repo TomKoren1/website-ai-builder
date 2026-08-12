@@ -10,3 +10,5 @@ helm template helm/reverse-proxy
 ```
 
 `backend/` expects a `backend-secrets` Secret in `ai-builder` (see `../infra/PHASE4-RUNBOOK.md`); `reverse-proxy/` expects `reverse-proxy-secrets` (see `../infra/PHASE4-RUNBOOK-B.md`) — both created out-of-band, never templated by the chart itself.
+
+`backend/values.yaml` and `frontend/values.yaml`'s `image.repository`/`image.tag` are **not meant to be hand-edited day to day** — `.github/workflows/backend-image.yml`/`frontend-image.yml` overwrite them automatically on every push to `main` that touches the corresponding app directory, pointing at the newly-built `ghcr.io/tomkoren1/ai-builder-*` image. `reverse-proxy/values.yaml` has no such workflow yet (still built/loaded locally per `../infra/PHASE4-RUNBOOK-B.md`).

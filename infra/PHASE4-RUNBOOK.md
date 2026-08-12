@@ -9,21 +9,35 @@ Prerequisite: Phase 1 (`infra/up.ps1`) and Phase 2 (Postgres + Gitea, see
 
 ## 1. Build the images
 
-No image registry in this setup — Kind can't pull from one, so images are
-built locally and loaded directly into the cluster's node.
+**As of `.github/workflows/backend-image.yml`/`frontend-image.yml`, this
+is now automated for any push to `main` that touches `backend/**` or
+`frontend/**`** — GitHub Actions builds the image, pushes it to GHCR
+(`ghcr.io/tomkoren1/ai-builder-backend`/`-frontend`), and commits the new
+tag into `helm/*/values.yaml`, which Argo CD's existing auto-sync then
+picks up on its own. No manual step needed for ongoing changes — this
+section is now only for the very first bring-up (before any image has
+ever been pushed) or fully offline iteration.
 
+**One-time step after the very first successful workflow run**: GHCR
+packages default to **private** even when pushed from a public repo — go
+to the package's own page (GitHub profile → Packages →
+`ai-builder-backend`/`ai-builder-frontend`) → Package settings → Danger
+Zone → Change visibility → Public. Skipping this means Kind's pulls fail
+with 401/403 and Argo CD shows the Application stuck `Progressing`/
+`Degraded` with an `ImagePullBackOff` on the pod.
+
+Manual / offline path (no registry involved, same as before this CI
+existed):
 ```
 docker build -t ai-builder-backend:local backend/
 docker build -t ai-builder-frontend:local frontend/
 kind load docker-image ai-builder-backend:local --name ai-builder
 kind load docker-image ai-builder-frontend:local --name ai-builder
 ```
-
-`imagePullPolicy: IfNotPresent` in both Helm charts means the kubelet won't
-try to pull from a registry as long as the tag is already present on the
-node — that's what `kind load docker-image` puts there. Re-run this whole
-step (rebuild + reload) after any backend/frontend code change; nothing
-here watches for changes automatically yet.
+Note this only works if `helm/*/values.yaml`'s `image.repository`/`tag`
+still point at the local `:local` tags — once the CI workflow has run at
+least once, it'll have overwritten those to point at GHCR, and you'd need
+to manually revert them to use this path again.
 
 ## 2. Install Argo CD
 

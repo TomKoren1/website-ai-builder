@@ -39,6 +39,7 @@ See `overview.md` for the full reasoning, including corrections made along the w
 ```
 overview.md              full design doc — read this first
 docs/                    cross-cutting write-ups not scoped to one directory (errors.md, etc.)
+.github/workflows/       CI — builds+pushes backend/frontend images to GHCR on push, bumps helm/*/values.yaml's image tag
 infra/
   kind/                   Kind cluster config
   ingress/                ingress-nginx Helm values + Ingress manifests (incl. app.local routing to backend/frontend)
