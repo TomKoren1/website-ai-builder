@@ -136,8 +136,13 @@ Two distinct flows — do not conflate them (see correction #2):
 
 ## Next Steps
 
-- [ ] Scaffold Phase 1: Kind config + LocalStack Helm values + the two Ingress manifests
-- [x] Define least-privilege IAM roles/policies in LocalStack (orchestrator role, ESO role) + STS AssumeRole wiring (Phase 1) — policy/role/trust-policy written correctly in Terraform; local *enforcement* of it is broken in the current LocalStack version (confirmed via testing, matches [upstream issue #7183](https://github.com/localstack/localstack/issues/7183)), so verification stops at "the code is correct," not "the emulator proved it."
-- [ ] Decide reverse-proxy implementation for domain→bucket routing (Phase 1 / correction #1)
-- [ ] Postgres schema migration for the tables above (Phase 2)
-- [ ] FastAPI skeleton + KMS envelope-encryption helper for API keys (Phase 2)
+All five phases above are built and verified live end-to-end — see `README.md`'s Status section for what "verified" means for each. This list is no longer "what's left to build," it's the known, deliberately-deferred gaps documented across the runbooks and `docs/errors.md` as the project was built, kept here as one place to see them all together:
+
+- [ ] **Fold `ingress-nginx`/LocalStack into Argo CD** (Phase 4) — still installed imperatively by `infra/up.ps1`, unlike everything built since. Needs the same multi-source Helm pattern `kube-prometheus-stack` now uses (Phase 5), but unlike that fresh install, these are *existing* releases — migrating them risks the stale-field conflict already hit once with `ingress-nginx`'s own `Recreate` strategy change (`docs/errors.md`). See `argocd/README.md`.
+- [ ] **Reverse-proxy's Postgres access is over-scoped** (Phase 4, Flow B) — uses the backend's own `app` DB user rather than a dedicated role restricted to `SELECT` on `domains`. Credential-wise it could write to any table, though the code never does. See `reverse-proxy/README.md`.
+- [ ] **No frontend UI for domains or deployment status** (Phase 4, Flow B) — `POST /domains` and reading `deployments.status` both currently require `curl`/direct DB access. See `infra/PHASE4-RUNBOOK-B.md`.
+- [ ] **`act_runner`/Gitea Actions aren't behind Argo CD either** (Phase 4, Flow B) — same category as ingress-nginx/LocalStack above, installed imperatively.
+- [ ] **Grafana RBAC** (Phase 5) — deliberately deferred; there's no second person yet to scope a read-only role against. See `docs/errors.md`.
+- [ ] **`/metrics` is reachable externally**, not just in-cluster (Phase 5) — the `/api/*` Ingress rule forwards it along with everything else. No secrets in it, but not intentionally public either. See the comment on the route in `backend/app/main.py`.
+- [ ] **No real Alertmanager receivers configured** (Phase 5) — Alertmanager runs and the chart's default alert rules exist, but nothing routes them to Slack/email/etc., so they'd just accumulate unseen right now.
+- [x] Least-privilege IAM roles/policies in LocalStack (orchestrator/ci-deploy/reverse-proxy roles) + STS AssumeRole wiring (Phase 1, extended in Phase 4) — policy/role/trust-policy written correctly in Terraform; local *enforcement* of it is broken in the current LocalStack version (confirmed via testing, matches [upstream issue #7183](https://github.com/localstack/localstack/issues/7183)), so verification stops at "the code is correct," not "the emulator proved it."
