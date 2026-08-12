@@ -38,3 +38,13 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      # This chart's CRDs (Prometheus, Alertmanager, ...) have OpenAPI
+      # schemas large enough that Argo CD's default kubectl-apply-style
+      # sync fails outright: it stores the whole object in a
+      # last-applied-configuration annotation, capped at 256KiB, and
+      # these blow past it ("metadata.annotations: Too long"). Server-side
+      # apply uses managed fields instead of that annotation, so the size
+      # limit doesn't apply — this is the standard fix for this specific,
+      # well-known kube-prometheus-stack + Argo CD combination.
+      - ServerSideApply=true
