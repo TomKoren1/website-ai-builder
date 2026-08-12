@@ -123,8 +123,12 @@ autogenerate is a starting point, not something to trust blindly.
 ## 13. Run the backend
 ```
 cd backend
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --reload-dir app
 ```
+`--reload-dir app` scopes the file watcher to just the app code — without
+it, `--reload` watches the entire `backend/` directory including `.venv`,
+so a `pip install` (e.g. after pulling a `requirements.txt` change) makes
+its own installed files trigger a reload storm on top of the real one.
 
 ## 14. Smoke test
 ```

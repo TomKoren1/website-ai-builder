@@ -52,6 +52,16 @@ Real problems hit while building this project, why they happened, and how they w
 
 **Lesson:** Config loaded once into a `Settings` object at import time will always have this failure mode. Worth remembering if this ever moves to a hot-reloadable config source.
 
+### Local dev venv doesn't auto-sync with `requirements.txt`, and `--reload` watches `.venv` too
+
+**What happened:** After Phase 5 added `prometheus_client` to `requirements.txt`, the locally-running `uvicorn --reload` crashed with `ModuleNotFoundError: No module named 'prometheus_client'` on the next code change — CI had already been rebuilding the Docker image fine (`pip install -r requirements.txt` runs fresh there every time), but the developer's own long-lived local `.venv` never got that command re-run against it. Then, after `pip install -r requirements.txt` fixed it, the reload log showed *another* crash cycle immediately after — `WatchFiles detected changes in '.venv\Lib\site-packages\prometheus_client\...'` — before a final successful startup, which briefly looked like the fix hadn't worked.
+
+**Why:** Two separate, compounding gaps. (1) `requirements.txt` changing doesn't propagate to an already-created local venv automatically — only a fresh container build or a manual `pip install` picks it up. (2) `uvicorn --reload` with no directory scoping watches the *entire* working directory by default, and `.venv` lives inside `backend/` — so `pip install` writing new files into `site-packages` triggered its own reload, layering more noise on top of the real fix and making the log look like a continued failure when it was actually two back-to-back non-problems.
+
+**Fix:** `pip install -r requirements.txt` to bring the local venv current (no code fix for this half — just something to remember after pulling a dependency change). For the second half: `uvicorn app.main:app --reload --reload-dir app` scopes the watcher to just the app code, so `.venv` changes (from `pip install`, or anything else) can never trigger a reload again.
+
+**Lesson:** A dependency added anywhere in a project has at least two places it needs to land — the environment CI builds fresh every time, and every developer's already-existing local environment, which nothing updates automatically. And: when a reload-driven dev server seems to "still be failing" after a fix, check whether the fix *itself* triggered another reload cycle before concluding the fix didn't work — the two can be visually indistinguishable in a scrolled-past log.
+
 ---
 
 ## Security

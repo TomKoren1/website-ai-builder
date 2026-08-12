@@ -82,7 +82,7 @@ With Phase 1 up, bring up Postgres + Gitea and the backend itself — see `infra
 ```
 cd backend
 .venv\Scripts\activate
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --reload-dir app
 ```
 See `backend/README.md` for what's in each file, and `backend/WORKFLOW.md` for how a request actually flows through auth, project creation, API-key encryption, and the chat/push loop.
 
