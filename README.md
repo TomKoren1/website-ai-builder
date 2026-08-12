@@ -11,7 +11,7 @@ Full architecture, design decisions, and the phase-by-phase build plan live in [
 - [x] **Phase 1 — Local environment**: Kind cluster, ingress-nginx, LocalStack (S3/Route53/KMS/IAM/STS), least-privilege IAM via Terraform
 - [x] **Phase 2 — Backend & database**: PostgreSQL schema, FastAPI, Gitea (per-project repos), KMS envelope-encrypted API keys, AI chat/push — full loop (register → project → encrypted key → chat → push a real commit) verified end-to-end
 - [x] **Phase 3 — Frontend**: Next.js auth, live preview canvas — full loop (register → chat → live preview → push) verified end-to-end in a browser
-- [ ] **Phase 4 — GitOps & CI/CD**: Argo CD (platform infra) + CI-driven S3 sync (user site content) — Flow A (backend/frontend Dockerized, deployed via Argo CD app-of-apps) and Flow B (per-project bucket + Gitea Actions → S3 sync + reverse-proxy serving) both written, neither yet verified live
+- [x] **Phase 4 — GitOps & CI/CD**: Argo CD (platform infra) + CI-driven S3 sync (user site content) — Flow A (backend/frontend Dockerized, deployed via Argo CD app-of-apps) and Flow B (per-project bucket + Gitea Actions → S3 sync + reverse-proxy serving) both verified end-to-end live; a GitHub Actions loop now also builds/pushes backend/frontend images to GHCR and bumps the Helm tag automatically on push, so Argo CD redeploys without a manual `kind load docker-image` step
 - [ ] **Phase 5 — Observability**: kube-prometheus-stack, Grafana dashboards-as-code
 
 ## Architecture
@@ -26,6 +26,7 @@ Full architecture, design decisions, and the phase-by-phase build plan live in [
 | AWS emulation | LocalStack (S3, Route53, KMS, IAM, STS) |
 | GitOps (platform infra only) | Argo CD |
 | CI/CD (user site content) | Gitea Actions (self-hosted runner, `act_runner`) |
+| CI/CD (platform images) | GitHub Actions → GHCR (builds backend/frontend, bumps the Helm image tag on push) |
 | Observability | Prometheus + Grafana |
 
 Two deliberately separate deployment flows:
@@ -95,7 +96,7 @@ See `frontend/README.md` for what's in each file.
 
 ## Getting started (Phase 4, Flow A)
 
-Dockerizes the backend/frontend and hands their deployment to Argo CD instead of running them via `npm run dev`/`uvicorn` directly. See `infra/PHASE4-RUNBOOK.md` for the full step-by-step (building/loading images, installing Argo CD, the `backend-secrets` Secret, bootstrapping the app-of-apps).
+Dockerizes the backend/frontend and hands their deployment to Argo CD instead of running them via `npm run dev`/`uvicorn` directly. See `infra/PHASE4-RUNBOOK.md` for the full step-by-step (installing Argo CD, the `backend-secrets` Secret, bootstrapping the app-of-apps). Building/loading images is now automated (`.github/workflows/backend-image.yml`/`frontend-image.yml` — push to `main`, Argo CD picks up the new image on its own); the runbook's manual `docker build` + `kind load docker-image` path still exists for the very first bring-up or fully offline iteration.
 
 ## Getting started (Phase 4, Flow B)
 
