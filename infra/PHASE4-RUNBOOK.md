@@ -127,13 +127,12 @@ loads, and login/register calls succeed through `/api` (same-origin now —
 no more `localhost:3000` ↔ `localhost:8000` cross-origin CORS dance from
 `next dev`).
 
-## Known follow-up (not done in this pass)
+## `ingress-nginx`/LocalStack now under Argo CD too
 
-`ingress-nginx` and LocalStack are still installed imperatively by
-`infra/up.ps1` (Helm directly), not reconciled by Argo CD — bringing them
-under GitOps too needs Argo CD's "multiple sources" Application (public
-Helm chart + this repo's `infra/ingress`/`infra/localstack` values files as
-a second source), which wasn't built out in this pass to avoid shipping
-something unverified against a live cluster. `overview.md`'s Phase 4 sync
-waves lists this as wave 0 ("platform") — worth doing once Flow A above is
-confirmed working end-to-end.
+Originally deferred here to avoid shipping an unverified multi-source
+Application against a live cluster. Done later, after Flow A/B and Phase 5
+were all confirmed working: `argocd/applications/ingress-nginx.yaml` and
+`localstack.yaml` adopt the already-running releases (`infra/up.ps1` still
+does the initial bootstrap — see those files' comments for why that stays
+imperative). Verified as a genuine zero-diff adoption before enabling
+automated sync; see `argocd/README.md` and `docs/errors.md`.
