@@ -1,0 +1,23 @@
+# Picked up by kube-prometheus-stack's Prometheus CR — only works because
+# argocd/applications/kube-prometheus-stack.yaml explicitly disables
+# serviceMonitorSelectorNilUsesHelmValues (see the comment there); without
+# that, a ServiceMonitor from a *different* Helm release than the stack's
+# own is silently ignored, which is the single most common gotcha with
+# this chart.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "backend.fullname" . }}
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "backend.labels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

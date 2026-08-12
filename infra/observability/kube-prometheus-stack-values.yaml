@@ -1,0 +1,95 @@
+# Helm values for prometheus-community/kube-prometheus-stack. Verified
+# against `helm show values prometheus-community/kube-prometheus-stack
+# --version 88.3.0` before writing (same discipline as every other chart
+# in this project, after getting burned twice trusting field names on
+# faith back in Phase 1).
+#
+# Consumed by argocd/applications/kube-prometheus-stack.yaml as the second
+# source in a multi-source Application — the chart itself comes straight
+# from the prometheus-community repo, this file supplies the values. See
+# that file's comments for why multi-source instead of vendoring the chart.
+
+prometheus:
+  prometheusSpec:
+    # The chart's Prometheus CR only auto-discovers ServiceMonitors/
+    # PodMonitors/etc created by *this same Helm release* by default —
+    # our own backend ServiceMonitor (helm/backend/templates/
+    # servicemonitor.yaml) would be silently ignored otherwise. This is
+    # the single most common kube-prometheus-stack gotcha; set explicitly
+    # rather than discovered later via "why isn't my ServiceMonitor
+    # showing up."
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+
+    retention: 7d
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+grafana:
+  # Created out-of-band, same pattern as every other credential here
+  # (postgres-credentials, localstack-auth, gitea-admin-secret, ...) —
+  # never the chart's own admin/prom-operator default. Keys: admin-user,
+  # admin-password. See infra/PHASE5-RUNBOOK.md.
+  admin:
+    existingSecret: grafana-admin-secret
+    userKey: admin-user
+    passwordKey: admin-password
+
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - grafana.local
+
+  sidecar:
+    dashboards:
+      enabled: true # default, but explicit — this is the whole point of dashboards-as-code (see helm/backend/templates/grafana-dashboard-configmap.yaml)
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# These four scrape kube-controller-manager/kube-scheduler/etcd/kube-proxy
+# via Services that only exist on a real kubeadm-style control plane —
+# Kind runs them as static pods bound to the host's own loopback instead,
+# so with these left enabled every one of these targets sits permanently
+# "down" in Prometheus. Disabling them isn't losing real signal (there's
+# nothing there to scrape on Kind), it's removing permanent false-red
+# noise. Re-enable if this ever points at a real (non-Kind) cluster.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false

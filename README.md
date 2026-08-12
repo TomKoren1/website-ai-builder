@@ -12,7 +12,7 @@ Full architecture, design decisions, and the phase-by-phase build plan live in [
 - [x] **Phase 2 — Backend & database**: PostgreSQL schema, FastAPI, Gitea (per-project repos), KMS envelope-encrypted API keys, AI chat/push — full loop (register → project → encrypted key → chat → push a real commit) verified end-to-end
 - [x] **Phase 3 — Frontend**: Next.js auth, live preview canvas — full loop (register → chat → live preview → push) verified end-to-end in a browser
 - [x] **Phase 4 — GitOps & CI/CD**: Argo CD (platform infra) + CI-driven S3 sync (user site content) — Flow A (backend/frontend Dockerized, deployed via Argo CD app-of-apps) and Flow B (per-project bucket + Gitea Actions → S3 sync + reverse-proxy serving) both verified end-to-end live; a GitHub Actions loop now also builds/pushes backend/frontend images to GHCR and bumps the Helm tag automatically on push, so Argo CD redeploys without a manual `kind load docker-image` step
-- [ ] **Phase 5 — Observability**: kube-prometheus-stack, Grafana dashboards-as-code
+- [ ] **Phase 5 — Observability**: kube-prometheus-stack (Argo CD, multi-source Application), backend instrumented (`prometheus_client`, custom LLM/deployment metrics), one dashboards-as-code Grafana dashboard — written, not yet verified live (see `infra/PHASE5-RUNBOOK.md`)
 
 ## Architecture
 
@@ -47,12 +47,14 @@ infra/
   localstack/             LocalStack Helm values (SERVICES, IAM enforcement, etc.)
   postgres/                hand-written Postgres StatefulSet (see manifests.yaml for why no Helm chart)
   gitea/                   Gitea Helm values — self-hosted Git server for per-project repos
+  observability/           kube-prometheus-stack Helm values (Phase 5) — consumed by argocd/'s multi-source Application, not installed imperatively
   terraform/              LocalStack-backed AWS resources (S3, KMS, IAM least-privilege policy)
   up.ps1                  idempotent bring-up script for the whole Phase 1 stack
   PHASE1-RUNBOOK.md        manual step-by-step commands (what up.ps1 automates)
   PHASE2-RUNBOOK.md        Postgres + Gitea + backend setup (venv, migrations, smoke tests)
   PHASE4-RUNBOOK.md        Argo CD install + backend/frontend deploy (Flow A)
   PHASE4-RUNBOOK-B.md      Per-project bucket + Gitea Actions + reverse-proxy (Flow B)
+  PHASE5-RUNBOOK.md        Grafana admin Secret + verifying Prometheus/Grafana come up
 argocd/                  Argo CD app-of-apps — bootstrap/root-application.yaml (apply once) + applications/ (everything else, reconciled from Git)
 helm/                    Our own charts — backend/, frontend/, reverse-proxy/ (Deployment + Service each; Ingress stays in infra/ingress, same as every other component)
 backend/                 FastAPI service — auth, projects, encrypted API keys, AI chat/push
@@ -101,6 +103,10 @@ Dockerizes the backend/frontend and hands their deployment to Argo CD instead of
 ## Getting started (Phase 4, Flow B)
 
 Per-project S3 bucket creation, the Gitea Actions workflow seeded into every new project repo, and the reverse-proxy that serves pushed sites back to visitors by domain. See `infra/PHASE4-RUNBOOK-B.md` — new Terraform (IAM), a migration, `act_runner` registration, and org-level Gitea Actions secrets, in that order.
+
+## Getting started (Phase 5)
+
+kube-prometheus-stack (Prometheus + Grafana + Alertmanager), backend metrics, and one dashboards-as-code Grafana dashboard. See `infra/PHASE5-RUNBOOK.md` — the Grafana admin Secret, pushing, and how to verify Prometheus is actually scraping the backend.
 
 ## Why these choices
 

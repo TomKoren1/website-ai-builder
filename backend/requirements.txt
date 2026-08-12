@@ -18,3 +18,5 @@ cryptography==44.0.0
 httpx==0.28.1
 anthropic>=0.45.0
 openai>=1.60.0
+
+prometheus-client==0.26.0

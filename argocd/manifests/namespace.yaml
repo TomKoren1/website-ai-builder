@@ -6,3 +6,11 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: ai-builder
+---
+# Phase 5 — kube-prometheus-stack lives here, kept separate from
+# ai-builder rather than folded in: it's platform infra (wave 0), not part
+# of the app itself.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability

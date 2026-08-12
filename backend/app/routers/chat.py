@@ -1,6 +1,7 @@
 import hashlib
 import json
 import secrets
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -13,6 +14,12 @@ from app.crypto import decrypt_api_key
 from app.db import get_db
 from app.llm.base import ChatMessage
 from app.llm.registry import get_provider
+from app.metrics import (
+    chat_requests_in_progress,
+    deployment_callbacks_total,
+    llm_request_duration_seconds,
+    llm_requests_total,
+)
 from app.models import ApiKey, Conversation, Deployment, Domain, Message, Project, User
 from app.schemas import (
     ChatRequest,
@@ -86,52 +93,67 @@ async def chat(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_owned_project(project_id, user, db)
-
-    api_key_row = await db.scalar(
-        select(ApiKey).where(ApiKey.user_id == user.id, ApiKey.provider == body.provider)
-    )
-    if api_key_row is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No API key stored for provider {body.provider!r} — add one first",
-        )
-
-    # Decrypted only for the duration of this one call; never cached, logged, or returned.
-    plaintext_key = decrypt_api_key(api_key_row.ciphertext, api_key_row.encrypted_dek, api_key_row.nonce)
-
-    conversation = await _get_or_create_conversation(project_id, db)
-    history_rows = await db.scalars(
-        select(Message).where(Message.conversation_id == conversation.id).order_by(Message.created_at)
-    )
-    history = [ChatMessage(role=m.role, content=m.content) for m in history_rows]
-    history.append(ChatMessage(role="user", content=body.message))
-
-    provider = get_provider(body.provider)
-    raw_reply = await provider.generate(plaintext_key, _SYSTEM_PROMPT, history)
-
+    chat_requests_in_progress.inc()
     try:
-        parsed = json.loads(raw_reply)
-        files = [FileChange(**f) for f in parsed["files"]]
-        reply_text = parsed["reply"]
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="Model returned a malformed response"
-        ) from exc
+        await _get_owned_project(project_id, user, db)
 
-    unsafe = [f.path for f in files if not is_safe_project_path(f.path)]
-    if unsafe:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Model returned unsafe file path(s): {unsafe}",
+        api_key_row = await db.scalar(
+            select(ApiKey).where(ApiKey.user_id == user.id, ApiKey.provider == body.provider)
         )
+        if api_key_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No API key stored for provider {body.provider!r} — add one first",
+            )
 
-    db.add(Message(conversation_id=conversation.id, role="user", content=body.message))
-    db.add(Message(conversation_id=conversation.id, role="assistant", content=raw_reply))
-    api_key_row.last_used_at = datetime.now(timezone.utc)
-    await db.commit()
+        # Decrypted only for the duration of this one call; never cached, logged, or returned.
+        plaintext_key = decrypt_api_key(api_key_row.ciphertext, api_key_row.encrypted_dek, api_key_row.nonce)
 
-    return ChatResponse(reply=reply_text, proposed_files=files)
+        conversation = await _get_or_create_conversation(project_id, db)
+        history_rows = await db.scalars(
+            select(Message).where(Message.conversation_id == conversation.id).order_by(Message.created_at)
+        )
+        history = [ChatMessage(role=m.role, content=m.content) for m in history_rows]
+        history.append(ChatMessage(role="user", content=body.message))
+
+        provider = get_provider(body.provider)
+        start = time.perf_counter()
+        try:
+            raw_reply = await provider.generate(plaintext_key, _SYSTEM_PROMPT, history)
+        except Exception:
+            llm_requests_total.labels(provider=body.provider, outcome="error").inc()
+            raise
+        finally:
+            llm_request_duration_seconds.labels(provider=body.provider).observe(time.perf_counter() - start)
+
+        try:
+            parsed = json.loads(raw_reply)
+            files = [FileChange(**f) for f in parsed["files"]]
+            reply_text = parsed["reply"]
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            llm_requests_total.labels(provider=body.provider, outcome="error").inc()
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail="Model returned a malformed response"
+            ) from exc
+
+        unsafe = [f.path for f in files if not is_safe_project_path(f.path)]
+        if unsafe:
+            llm_requests_total.labels(provider=body.provider, outcome="error").inc()
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Model returned unsafe file path(s): {unsafe}",
+            )
+
+        llm_requests_total.labels(provider=body.provider, outcome="success").inc()
+
+        db.add(Message(conversation_id=conversation.id, role="user", content=body.message))
+        db.add(Message(conversation_id=conversation.id, role="assistant", content=raw_reply))
+        api_key_row.last_used_at = datetime.now(timezone.utc)
+        await db.commit()
+
+        return ChatResponse(reply=reply_text, proposed_files=files)
+    finally:
+        chat_requests_in_progress.dec()
 
 
 @router.post("/push", response_model=DeploymentOut, dependencies=[Depends(verify_csrf)])
@@ -222,4 +244,7 @@ async def deployment_callback(
     deployment.deployed_at = datetime.now(timezone.utc)
     deployment.callback_token_hash = None  # single-use — a replay of this same callback now 404s
     await db.commit()
+
+    deployment_callbacks_total.labels(status=body.status).inc()
+
     return {"ok": True}

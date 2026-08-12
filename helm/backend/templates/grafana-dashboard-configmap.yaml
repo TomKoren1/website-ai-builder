@@ -1,0 +1,87 @@
+# Dashboards-as-code (overview.md Phase 5): this ConfigMap IS the
+# dashboard — Grafana's own sidecar (grafana.sidecar.dashboards, enabled
+# by default in kube-prometheus-stack) watches for the grafana_dashboard
+# label across all namespaces (searchNamespace: ALL, chart default) and
+# auto-imports anything it finds. Nothing to click through in Grafana's
+# UI to get this dashboard there — edit the JSON, commit, Argo CD applies
+# it, the sidecar picks it up within its poll interval.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "backend.fullname" . }}-dashboard
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  ai-builder-backend.json: |
+    {
+      "title": "AI Website Builder — Backend",
+      "uid": "ai-builder-backend",
+      "schemaVersion": 39,
+      "version": 1,
+      "editable": true,
+      "time": { "from": "now-6h", "to": "now" },
+      "refresh": "30s",
+      "templating": {
+        "list": [
+          {
+            "name": "datasource",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": {}
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "LLM requests by outcome",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum by (provider, outcome) (rate(llm_requests_total[5m]))",
+              "legendFormat": "{{ "{{" }}provider{{ "}}" }} - {{ "{{" }}outcome{{ "}}" }}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "LLM request latency (p95)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, provider) (rate(llm_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{ "{{" }}provider{{ "}}" }}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Chat requests in progress",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 8 },
+          "targets": [
+            { "expr": "chat_requests_in_progress" }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Deployment callbacks by status",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 8, "w": 18, "x": 6, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum by (status) (rate(deployment_callbacks_total[5m]))",
+              "legendFormat": "{{ "{{" }}status{{ "}}" }}"
+            }
+          ]
+        }
+      ]
+    }

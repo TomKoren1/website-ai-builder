@@ -1,0 +1,40 @@
+# sync-wave 0 ("platform"), per overview.md's Phase 4 plan — after the
+# namespace (wave -1), before backend/frontend (wave 1) even though
+# observability doesn't block the app from working; keeping it at 0
+# matches where it's documented in overview.md, not a hard dependency.
+#
+# Multi-source Application: the chart comes straight from the
+# prometheus-community repo (source 1), our values file comes from this
+# repo (source 2, referenced via `ref: values` + the `$values` prefix in
+# source 1's valueFiles — see https://argo-cd.readthedocs.io/en/stable/user-guide/multiple_sources/).
+# This is the pattern deliberately deferred in Phase 4 for ingress-nginx/
+# LocalStack specifically because migrating an *already-running* imperative
+# install risked exactly the kind of stale-field conflict documented in
+# docs/errors.md. Safe here because this is a fresh install with nothing
+# to migrate — first real use of the pattern rather than a retrofit.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: "88.3.0"
+      helm:
+        valueFiles:
+          - $values/infra/observability/kube-prometheus-stack-values.yaml
+    - repoURL: https://github.com/TomKoren1/website-ai-builder.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

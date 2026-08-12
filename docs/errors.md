@@ -261,3 +261,23 @@ Real problems hit while building this project, why they happened, and how they w
 **Fix:** Deleting the `act_runner` pod and letting the Deployment recreate it (a fresh registration against Gitea) unstuck it — the next dispatched job ran normally within seconds.
 
 **Status:** Left as a known flaky first-run behavior, not a root-caused and fixed bug — unlike the LocalStack IAM-enforcement gap, there's no confirmed external explanation here, just that a restart reliably fixed it once. If it recurs, worth checking `act_runner`'s own registration state file (`/data/.runner`) or upgrading past `v0.6.1` before assuming it's this exact issue again.
+
+---
+
+## Phase 5 — Observability
+
+### kube-prometheus-stack only auto-discovers ServiceMonitors from its own Helm release
+
+**Not a bug — caught during upfront verification, before ever deploying.** The chart's Prometheus CR defaults `serviceMonitorSelectorNilUsesHelmValues` (and the `podMonitor`/`rule`/`probe`/`scrapeConfig` equivalents) to `true`, which means it only picks up `ServiceMonitor`s created by *that same* Helm release — a `ServiceMonitor` shipped alongside the backend's own chart (a completely separate Helm release) would be silently ignored, not erred on. This is widely known as the single most common kube-prometheus-stack gotcha, and it fails silently — no error, no event, the target just never appears.
+
+**Fix:** Set all five `*SelectorNilUsesHelmValues` flags to `false` in `infra/observability/kube-prometheus-stack-values.yaml`, confirmed via `helm show values` against the exact pinned chart version before writing anything (same discipline as every other chart in this project).
+
+**Lesson:** A resource-discovery default that's scoped to "only things I created myself" is an easy thing to trip over the first time you deploy a *dependent* resource (here, `helm/backend/templates/servicemonitor.yaml`) from a *different* release than the one doing the discovering. Worth checking explicitly for any Operator-pattern chart, not just this one.
+
+### kube-controller-manager/scheduler/etcd/kube-proxy scrape targets are permanently down on Kind
+
+**Not a bug — a known Kind limitation, designed around rather than hit and fixed.** kube-prometheus-stack enables scraping these four by default, via Services that assume a real kubeadm-style control plane. Kind runs them as static pods bound to the node's own loopback interface instead, so nothing is ever there to scrape — left enabled, all four sit permanently red in Prometheus with no way to fix it (there's genuinely nothing on the other end), pure noise no different in kind from the LocalStack IAM-enforcement gap already documented here.
+
+**Fix:** `kubeControllerManager.enabled`, `kubeScheduler.enabled`, `kubeEtcd.enabled`, `kubeProxy.enabled` all set to `false` in the values file, with a comment to re-enable if this ever points at a real (non-Kind) cluster.
+
+**Lesson:** Not every default-enabled scrape target is meaningful on every kind of cluster — a chart's defaults are tuned for what a *typical* cluster looks like, not necessarily the one it's actually installed on.

@@ -9,5 +9,6 @@ spec:
   selector:
     {{- include "backend.labels" . | nindent 4 }}
   ports:
-    - port: {{ .Values.service.port }}
+    - name: http # named so the ServiceMonitor (templates/servicemonitor.yaml) can reference it — Prometheus Operator matches by port name, not number
+      port: {{ .Values.service.port }}
       targetPort: 8000
