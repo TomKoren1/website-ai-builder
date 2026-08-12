@@ -16,6 +16,15 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # nginx's default is 60s — too short for /chat: a large multi-page
+    # generation (e.g. "add all the relevant subpages") can legitimately
+    # take longer than that, and the LLM SDKs' own client timeouts
+    # (several minutes, unset here — see app/llm/*.py) are nowhere near
+    # the bottleneck. Applies to the whole Ingress (frontend traffic too),
+    # which is harmless — a longer allowance doesn't slow down fast
+    # requests, it just stops capping slow ones prematurely.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
 spec:
   ingressClassName: nginx
   rules:
