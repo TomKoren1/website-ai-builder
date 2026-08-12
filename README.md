@@ -12,7 +12,7 @@ Full architecture, design decisions, and the phase-by-phase build plan live in [
 - [x] **Phase 2 — Backend & database**: PostgreSQL schema, FastAPI, Gitea (per-project repos), KMS envelope-encrypted API keys, AI chat/push — full loop (register → project → encrypted key → chat → push a real commit) verified end-to-end
 - [x] **Phase 3 — Frontend**: Next.js auth, live preview canvas — full loop (register → chat → live preview → push) verified end-to-end in a browser
 - [x] **Phase 4 — GitOps & CI/CD**: Argo CD (platform infra) + CI-driven S3 sync (user site content) — Flow A (backend/frontend Dockerized, deployed via Argo CD app-of-apps) and Flow B (per-project bucket + Gitea Actions → S3 sync + reverse-proxy serving) both verified end-to-end live; a GitHub Actions loop now also builds/pushes backend/frontend images to GHCR and bumps the Helm tag automatically on push, so Argo CD redeploys without a manual `kind load docker-image` step
-- [ ] **Phase 5 — Observability**: kube-prometheus-stack (Argo CD, multi-source Application), backend instrumented (`prometheus_client`, custom LLM/deployment metrics), one dashboards-as-code Grafana dashboard — written, not yet verified live (see `infra/PHASE5-RUNBOOK.md`)
+- [x] **Phase 5 — Observability**: kube-prometheus-stack (Argo CD, multi-source Application), backend instrumented (`prometheus_client`, custom LLM/deployment metrics), one dashboards-as-code Grafana dashboard — verified end-to-end live (Prometheus scraping the backend `up`, Grafana dashboard auto-imported via the ConfigMap sidecar)
 
 ## Architecture
 
@@ -106,7 +106,7 @@ Per-project S3 bucket creation, the Gitea Actions workflow seeded into every new
 
 ## Getting started (Phase 5)
 
-kube-prometheus-stack (Prometheus + Grafana + Alertmanager), backend metrics, and one dashboards-as-code Grafana dashboard. See `infra/PHASE5-RUNBOOK.md` — the Grafana admin Secret, pushing, and how to verify Prometheus is actually scraping the backend.
+kube-prometheus-stack (Prometheus + Grafana + Alertmanager), backend metrics, and one dashboards-as-code Grafana dashboard. See `infra/PHASE5-RUNBOOK.md` — the Grafana admin Secret, a one-time manual CRD install (Argo CD's own sync fails on these specific CRDs even with Server-Side Apply — see `docs/errors.md`), pushing, and how to verify Prometheus is actually scraping the backend.
 
 ## Why these choices
 
