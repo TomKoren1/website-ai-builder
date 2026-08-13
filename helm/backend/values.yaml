@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/tomkoren1/ai-builder-backend
-  tag: e4d8227
+  tag: 533c57c
   pullPolicy: IfNotPresent
 replicaCount: 1
 service:
