@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import secrets
 import time
 import uuid
@@ -35,6 +36,8 @@ from app.security.deps import get_current_user
 from app.utils.paths import is_safe_project_path
 
 _CI_WORKFLOW_FILE = "deploy.yml"
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["chat"])
 
@@ -127,11 +130,20 @@ async def chat(
             llm_request_duration_seconds.labels(provider=body.provider).observe(time.perf_counter() - start)
 
         try:
-            parsed = json.loads(raw_reply)
+            # Models routinely ignore "respond with JSON and nothing else" and wrap the
+            # object in a ```json ... ``` fence anyway — strip that before parsing rather
+            # than treating every fenced reply as malformed.
+            candidate = raw_reply.strip()
+            if candidate.startswith("```"):
+                candidate = candidate.split("\n", 1)[1] if "\n" in candidate else ""
+                candidate = candidate.rsplit("```", 1)[0].strip()
+
+            parsed = json.loads(candidate)
             files = [FileChange(**f) for f in parsed["files"]]
             reply_text = parsed["reply"]
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             llm_requests_total.labels(provider=body.provider, outcome="error").inc()
+            logger.warning("Model returned unparsable reply for provider=%s: %r", body.provider, raw_reply[:500])
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail="Model returned a malformed response"
             ) from exc

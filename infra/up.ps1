@@ -1,8 +1,8 @@
-<#
+﻿<#
 .SYNOPSIS
   Brings the whole Phase 1 stack up from scratch, or resumes it if it's
   half-up. Safe to run repeatedly (every step checks "does this already
-  exist" before acting) — that's what makes it safe to use as the daily
+  exist" before acting) - that's what makes it safe to use as the daily
   "get everything running again" command instead of retyping the runbook.
 
 .PARAMETER AutoApproveTerraform
@@ -68,7 +68,7 @@ Invoke-Checked "helm repo update ingress-nginx | Out-Null"
 
 $ingressReleases = & helm list -n ingress-nginx -q 2>$null
 if ($ingressReleases -contains "ingress-nginx") {
-    Write-Ok "release already installed (values changes require a manual 'helm upgrade' — this script won't silently re-apply edited values)"
+    Write-Ok "release already installed (values changes require a manual 'helm upgrade' - this script won't silently re-apply edited values)"
 }
 else {
     Invoke-Checked "helm install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace -f `"$ScriptRoot\ingress\ingress-nginx-values.yaml`""
@@ -117,14 +117,14 @@ else {
     }
 
     if (-not $token) {
-        throw "No LocalStack auth token available — cannot proceed."
+        throw "No LocalStack auth token available - cannot proceed."
     }
 
     Invoke-Checked "kubectl create secret generic localstack-auth -n localstack --from-literal=LOCALSTACK_AUTH_TOKEN=`"$token`""
 }
 
 # ---------------------------------------------------------------------------
-# 4. LocalStack itself — `upgrade --install` is idempotent regardless of
+# 4. LocalStack itself - `upgrade --install` is idempotent regardless of
 #    whether this is a fresh install or a re-run, so no existence check needed.
 # ---------------------------------------------------------------------------
 Write-Step "LocalStack"
@@ -137,22 +137,22 @@ Invoke-Checked "kubectl wait --namespace localstack --for=condition=ready pod --
 Write-Ok "LocalStack ready"
 
 # ---------------------------------------------------------------------------
-# 5. Ingress manifests (idempotent — kubectl apply is a no-op if unchanged)
+# 5. Ingress manifests (idempotent - kubectl apply is a no-op if unchanged)
 # ---------------------------------------------------------------------------
 Write-Step "Ingress manifests"
 Invoke-Checked "kubectl apply -f `"$ScriptRoot\ingress\manifests\localstack-ingress.yaml`""
-Invoke-Checked "kubectl apply -f `"$ScriptRoot\ingress\manifests\test-app.yaml`""
+Invoke-Checked "kubectl apply -f `"$ScriptRoot\ingress\manifests\app-ingress.yaml`""
 Write-Ok "applied"
 
 # ---------------------------------------------------------------------------
-# 6. Hosts file sanity check (read-only — editing hosts needs admin rights,
+# 6. Hosts file sanity check (read-only - editing hosts needs admin rights,
 #    left to you deliberately rather than a script silently elevating)
 # ---------------------------------------------------------------------------
 Write-Step "Hosts file check"
 $hostsPath = "$env:WINDIR\System32\drivers\etc\hosts"
 $hostsContent = Get-Content $hostsPath -ErrorAction SilentlyContinue
 $missing = @()
-foreach ($h in @("localstack.local", "test.local")) {
+foreach ($h in @("localstack.local", "app.local")) {
     if (-not ($hostsContent -match [regex]::Escape($h))) {
         $missing += $h
     }
@@ -182,7 +182,7 @@ if ($healthy) {
     Write-Ok "localstack.local reachable through ingress"
 }
 else {
-    Write-Warn "could not reach http://localstack.local — check the hosts file entries above"
+    Write-Warn "could not reach http://localstack.local - check the hosts file entries above"
 }
 
 # ---------------------------------------------------------------------------
@@ -203,7 +203,7 @@ try {
             Invoke-Checked "terraform apply tfplan"
         }
         else {
-            Write-Warn "skipped terraform apply — infra may be out of sync with the plan above"
+            Write-Warn "skipped terraform apply - infra may be out of sync with the plan above"
         }
     }
 
