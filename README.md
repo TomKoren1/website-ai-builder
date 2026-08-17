@@ -6,7 +6,7 @@ The product is the vehicle. The goal is practicing DevOps end-to-end — auth, s
 
 Full architecture, design decisions, and the phase-by-phase build plan live in [`overview.md`](./overview.md).
 
-![Architecture diagram](./docs/architecture.jpeg)
+![User flow: login, chat with AI, live preview, push to your domain](./docs/user-flow.jpeg)
 
 ## Status
 
@@ -17,6 +17,8 @@ Full architecture, design decisions, and the phase-by-phase build plan live in [
 - [x] **Phase 5 — Observability**: kube-prometheus-stack (Argo CD, multi-source Application), backend instrumented (`prometheus_client`, custom LLM/deployment metrics), one dashboards-as-code Grafana dashboard — verified end-to-end live (Prometheus scraping the backend `up`, Grafana dashboard auto-imported via the ConfigMap sidecar)
 
 ## Architecture
+
+![Architecture diagram](./docs/architecture.jpeg)
 
 | Layer | Choice |
 |---|---|
@@ -34,6 +36,8 @@ Full architecture, design decisions, and the phase-by-phase build plan live in [
 Two deliberately separate deployment flows:
 - **Platform infra** (ingress-nginx, LocalStack, the app's own frontend/backend) is reconciled by **Argo CD** from Git.
 - **User site content** (the AI-generated static sites) is pushed by **CI** (`aws s3 sync`) — not something Argo CD touches, since S3 objects aren't Kubernetes resources.
+
+![GitOps vs CI-only deployment flows](./docs/gitops-flow.jpeg)
 
 See `overview.md` for the full reasoning, including corrections made along the way (domain→bucket routing, why ArgoCD is scoped the way it is, LocalStack's persistence/licensing limitations on the free plan).
 
@@ -115,4 +119,6 @@ kube-prometheus-stack (Prometheus + Grafana + Alertmanager), backend metrics, an
 A few decisions worth calling out (details in `overview.md` and `docs/errors.md`):
 - **Reverse-proxy routing, not bucket-name-as-domain** — a small proxy service resolves `domain → bucket` from Postgres and serves privately, rather than naming buckets after domains and relying on S3's public virtual-hosted-style resolution. Chosen permanently (not just a local-dev workaround) since it also lets bucket names be deterministic/internal (`site-{project_id}`) instead of derived from user input, which keeps the orchestrator's `s3:CreateBucket` permission scoped to a fixed prefix.
 - **Envelope encryption via KMS** for user-supplied LLM API keys, not Kubernetes Secrets — K8s Secrets are base64 (not encrypted) and meant for a handful of static values, not dynamically-created per-user secrets.
+
+  ![Envelope encryption for user API keys](./docs/envelope-encryption.jpeg)
 - **Argo CD scoped to platform infra only** — it reconciles Kubernetes resources from Git; pushing static files to S3 isn't a K8s object, so that path is CI-only.
