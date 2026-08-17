@@ -6,6 +6,8 @@ The product is the vehicle. The goal is practicing DevOps end-to-end — auth, s
 
 Full architecture, design decisions, and the phase-by-phase build plan live in [`overview.md`](./overview.md).
 
+![Architecture diagram](./docs/architecture.jpeg)
+
 ## Status
 
 - [x] **Phase 1 — Local environment**: Kind cluster, ingress-nginx, LocalStack (S3/Route53/KMS/IAM/STS), least-privilege IAM via Terraform
